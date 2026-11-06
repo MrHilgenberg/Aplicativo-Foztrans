@@ -1,11 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'config/app_config.dart';
 import 'models/transporte_models.dart';
 import 'screens/home_screen.dart';
 import 'services/api_service.dart';
 
-void main() {
+
+/// Controlador global de escala para acessibilidade (0.9x a 1.4x)
+final ValueNotifier<double> appScaleNotifier = ValueNotifier<double>(1.0);
+
+Future<void> alterarEscalaApp(double novaEscala) async {
+  final valor = novaEscala.clamp(0.9, 1.4);
+  appScaleNotifier.value = valor;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('app_ui_scale', valor);
+  } catch (_) {}
+}
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final salvo = prefs.getDouble('app_ui_scale');
+    if (salvo != null) {
+      appScaleNotifier.value = salvo.clamp(0.9, 1.4);
+    }
+  } catch (_) {}
   runApp(const MobiFozApp());
 }
 
@@ -14,33 +35,45 @@ class MobiFozApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Ônibus de Foz do Iguaçu · FOZTRANS',
-      debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.system,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: AppConfig.bgLight,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppConfig.brandLight,
-          primary: AppConfig.brandLight,
-          secondary: AppConfig.accentLight,
-          brightness: Brightness.light,
-        ),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: AppConfig.bgDark,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppConfig.brandDark,
-          primary: AppConfig.brandDark,
-          secondary: AppConfig.accentDark,
-          brightness: Brightness.dark,
-        ),
-      ),
-      home: const _InicializadorScreen(),
+    return ValueListenableBuilder<double>(
+      valueListenable: appScaleNotifier,
+      builder: (context, scale, _) {
+        return MaterialApp(
+          title: 'FozBus · FOZTRANS',
+          debugShowCheckedModeBanner: false,
+          themeMode: ThemeMode.system,
+          theme: ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.light,
+            scaffoldBackgroundColor: AppConfig.bgLight,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: AppConfig.brandLight,
+              primary: AppConfig.brandLight,
+              secondary: AppConfig.accentLight,
+              brightness: Brightness.light,
+            ),
+          ),
+          darkTheme: ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.dark,
+            scaffoldBackgroundColor: AppConfig.bgDark,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: AppConfig.brandDark,
+              primary: AppConfig.brandDark,
+              secondary: AppConfig.accentDark,
+              brightness: Brightness.dark,
+            ),
+          ),
+          builder: (context, child) {
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+              child: child!,
+            );
+          },
+          home: const _InicializadorScreen(),
+        );
+      },
     );
   }
 }
@@ -69,10 +102,7 @@ class _InicializadorScreenState extends State<_InicializadorScreen> {
       _mensagem = 'Carregando linhas, pontos e horários da FOZTRANS…';
     });
 
-    // 1. Tenta o cache local para abertura instantânea
     DadosTransporteGeral? dados = await _api.carregarCacheLocal();
-
-    // 2. Se não houver cache local ainda, baixa do Google Apps Script
     dados ??= await _api.baixaDados();
 
     if (!mounted) return;
@@ -99,24 +129,42 @@ class _InicializadorScreenState extends State<_InicializadorScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // Logo Foztrans.png direto de assets/Foztrans.png com cantos arredondados
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                constraints: const BoxConstraints(maxWidth: 260),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
                 ),
-                child: const Text(
-                  'FOZTRANS',
-                  style: TextStyle(
-                    color: AppConfig.brandLight,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 24,
-                    letterSpacing: 1.2,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Image.asset(
+                    'assets/fozbus_icone.png',
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Padding(
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                      child: Text(
+                        'FOZTRANS',
+                        style: TextStyle(
+                          color: AppConfig.brandLight,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 24,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               if (!_erro)
                 const CircularProgressIndicator(color: AppConfig.accentLight),
               const SizedBox(height: 18),

@@ -69,6 +69,7 @@ class ApiService {
   }
 
   /// Busca posições GPS no Cloudflare Worker (com fallback para o Apps Script)
+/// Busca posições GPS no Cloudflare Worker (com fallback para o Apps Script) sem cache
   Future<ResultadoTempoReal> baixaRT(List<String> linhasIds) async {
     if (linhasIds.isEmpty) return ResultadoTempoReal(t: 0, v: []);
 
@@ -82,14 +83,13 @@ class ApiService {
     final baseUrl = AppConfig.rtUrl.endsWith('/')
         ? AppConfig.rtUrl
         : '${AppConfig.rtUrl}/';
+    final cb = DateTime.now().millisecondsSinceEpoch;
 
     final futures = lotes.map((lote) async {
       final param = Uri.encodeComponent(lote.join(','));
       try {
-        final uri = Uri.parse('$baseUrl?onibus=1&linha=$param');
-        final resp = await http
-            .get(uri)
-            .timeout(const Duration(seconds: 6));
+        final uri = Uri.parse('$baseUrl?onibus=1&linha=$param&_t=$cb');
+        final resp = await http.get(uri).timeout(const Duration(seconds: 6));
         if (resp.statusCode == 200) {
           final j = jsonDecode(resp.body) as Map<String, dynamic>;
           if (j['t'] != null) return j;
@@ -98,10 +98,9 @@ class ApiService {
       // Fallback para o Apps Script se o Worker falhar
       try {
         final uriFallback =
-            Uri.parse('${AppConfig.dadosUrl}?onibus=1&linha=$param');
-        final resp = await http
-            .get(uriFallback)
-            .timeout(const Duration(seconds: 6));
+            Uri.parse('${AppConfig.dadosUrl}?onibus=1&linha=$param&_t=$cb');
+        final resp =
+            await http.get(uriFallback).timeout(const Duration(seconds: 6));
         if (resp.statusCode == 200) {
           return jsonDecode(resp.body) as Map<String, dynamic>;
         }

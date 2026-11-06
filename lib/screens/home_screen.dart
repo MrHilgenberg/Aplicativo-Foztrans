@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import '../config/app_config.dart';
+import '../main.dart';
 import '../models/transporte_models.dart';
 import '../services/api_service.dart';
 import '../utils/motor_horarios.dart';
@@ -20,8 +21,13 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final ApiService _api = ApiService();
   final MapController _mapController = MapController();
+  final DraggableScrollableController _sheetController =
+      DraggableScrollableController();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _origemController = TextEditingController();
+
+  static const Color _corVermelhoDestaque = Color(0xFFE53935);
+  static const Color _corGpsAzul = Color(0xFF0B57D0);
 
   late DadosTransporteGeral _d;
   String _lang = 'pt';
@@ -56,9 +62,204 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _buscandoGeo = false;
   List<EnderecoBuscaResult> _resultadosGeo = [];
 
-  // Ônibus em tempo real
+  // Ônibus em tempo real (atualizados a cada 15s)
   List<VeiculoTempoReal> _veiculosRt = [];
   Timer? _timerRt;
+
+  // Dicionário de Idiomas (PT / ES / EN)
+  static const Map<String, Map<String, String>> _i18n = {
+    'pt': {
+      'title': 'Linhas de ônibus',
+      'qlabel': 'Para onde você quer ir?',
+      'search': 'Linha, ponto ou endereço…',
+      'nearBtn': 'Ver linhas e pontos perto de mim',
+      'tall': 'Todas',
+      'loc': 'Onde estou',
+      'map_ruas': 'Mapa: Ruas',
+      'map_sat': 'Mapa: Satélite',
+      'painel_ttu': 'Painel TTU',
+      'nextdep': 'próx. saída',
+      'placesR': 'ENDEREÇOS E LOCAIS',
+      'geoLoad': 'Procurando endereços e locais…',
+      'geoNone': 'Nada encontrado em Foz do Iguaçu com esse nome.',
+      'stopsG': 'PONTOS DE PARADA',
+      'places': 'PONTOS TURÍSTICOS E TERMINAIS',
+      'back': '← Voltar',
+      'du': 'Dias úteis',
+      'sab': 'Sábado',
+      'dom': 'Domingo',
+      'fromT': 'Saindo do Terminal (TTU)',
+      'fromB': 'Saindo do bairro',
+      'fromC': 'Saindo do Centro',
+      'fromA': 'Sentido ida',
+      'fromV': 'Sentido volta',
+      'toB': 'sentido bairro',
+      'toT': 'sentido Terminal',
+      'toA': 'ida',
+      'toV': 'volta',
+      'nextHere': 'PRÓXIMA PASSAGEM NESTE PONTO (ESTIMADO)',
+      'next': 'PRÓXIMA SAÍDA DO PONTO INICIAL',
+      'now': 'agora',
+      'inmin': 'em {n} min',
+      'then': 'Depois',
+      'nomore': 'Não há mais viagens programadas para hoje.',
+      'timetable': 'QUADRO DE HORÁRIOS',
+      'trips': 'VIAGENS',
+      'showPast': 'Mostrar horários que já passaram ({n})',
+      'hidePast': 'Ocultar horários que já passaram',
+      'stretch': 'Trecho selecionado no mapa',
+      'allTimes': 'Mostrar todos os horários',
+      'tripOf': 'Viagem das {h}',
+      'route': 'Trajeto',
+      'allRoutes': 'Mostrar todos os trajetos',
+      'how': 'COMO CHEGAR DE ÔNIBUS',
+      'deL': 'De onde você sai?',
+      'nearL': 'LINHAS QUE PASSAM PERTO (ATÉ 500 M)',
+      'noNear': 'LINHAS MAIS PRÓXIMAS',
+      'board': 'Embarque',
+      'troca1': '1 troca',
+      'direto': 'sem troca',
+      'pass': 'passa',
+      'noPass': 'sem mais viagens hoje',
+      'goHere': 'Como chegar de ônibus aqui',
+      'pickDest': 'Mova o mapa até o alfinete ficar no seu destino.',
+      'pickOrig': 'Mova o mapa até o alfinete ficar no local de partida.',
+      'okDest': 'Ir para cá',
+      'okOrig': 'Sair daqui',
+      'cancel': 'Cancelar',
+      'nearYou': 'Perto de você',
+      'myLoc': 'Sua localização',
+      'locDenied': 'Permissão de localização negada.',
+    },
+    'es': {
+      'title': 'Líneas de autobús',
+      'qlabel': '¿Adónde quiere ir?',
+      'search': 'Línea, parada o dirección…',
+      'nearBtn': 'Ver líneas y paradas cerca de mí',
+      'tall': 'Todas',
+      'loc': 'Dónde estoy',
+      'map_ruas': 'Mapa: Calles',
+      'map_sat': 'Mapa: Satélite',
+      'painel_ttu': 'Panel TTU',
+      'nextdep': 'próx. salida',
+      'placesR': 'DIRECCIONES Y LUGARES',
+      'geoLoad': 'Buscando direcciones y lugares…',
+      'geoNone': 'No se encontró nada en Foz do Iguaçu con ese nombre.',
+      'stopsG': 'PARADAS DE AUTOBÚS',
+      'places': 'ATRACTIVOS Y TERMINALES',
+      'back': '← Volver',
+      'du': 'Días hábiles',
+      'sab': 'Sábado',
+      'dom': 'Domingo',
+      'fromT': 'Desde la Terminal (TTU)',
+      'fromB': 'Desde el barrio',
+      'fromC': 'Desde el Centro',
+      'fromA': 'Sentido ida',
+      'fromV': 'Sentido vuelta',
+      'toB': 'hacia el barrio',
+      'toT': 'hacia la Terminal',
+      'toA': 'ida',
+      'toV': 'vuelta',
+      'nextHere': 'PRÓXIMO PASO POR ESTE PUNTO (ESTIMADO)',
+      'next': 'PRÓXIMA SALIDA DEL PUNTO INICIAL',
+      'now': 'ahora',
+      'inmin': 'en {n} min',
+      'then': 'Después',
+      'nomore': 'No hay más viajes programados para hoy.',
+      'timetable': 'CUADRO DE HORARIOS',
+      'trips': 'VIAJES',
+      'showPast': 'Mostrar horarios que ya pasaron ({n})',
+      'hidePast': 'Ocultar horarios que ya pasaron',
+      'stretch': 'Tramo seleccionado en el mapa',
+      'allTimes': 'Mostrar todos los horarios',
+      'tripOf': 'Viaje de las {h}',
+      'route': 'Recorrido',
+      'allRoutes': 'Mostrar todos los recorridos',
+      'how': 'CÓMO LLEGAR EN AUTOBÚS',
+      'deL': '¿De dónde sale?',
+      'nearL': 'LÍNEAS QUE PASAN CERCA (HASTA 500 M)',
+      'noNear': 'LÍNEAS MÁS CERCANAS',
+      'board': 'Suba',
+      'troca1': '1 transbordo',
+      'direto': 'sin transbordo',
+      'pass': 'pasa',
+      'noPass': 'sin más viajes hoy',
+      'goHere': 'Cómo llegar en autobús aquí',
+      'pickDest': 'Mueva el mapa hasta que el marcador quede en su destino.',
+      'pickOrig': 'Mueva el mapa hasta que el marcador quede en la salida.',
+      'okDest': 'Ir aquí',
+      'okOrig': 'Salir de aquí',
+      'cancel': 'Cancelar',
+      'nearYou': 'Cerca de usted',
+      'myLoc': 'Su ubicación',
+      'locDenied': 'Permiso de ubicación denegado.',
+    },
+    'en': {
+      'title': 'Bus lines',
+      'qlabel': 'Where do you want to go?',
+      'search': 'Line, stop or address…',
+      'nearBtn': 'See lines and stops near me',
+      'tall': 'All',
+      'loc': 'Where am I',
+      'map_ruas': 'Map: Streets',
+      'map_sat': 'Map: Satellite',
+      'painel_ttu': 'TTU Board',
+      'nextdep': 'next dep.',
+      'placesR': 'ADDRESSES AND PLACES',
+      'geoLoad': 'Searching addresses and places…',
+      'geoNone': 'Nothing found in Foz do Iguaçu with that name.',
+      'stopsG': 'BUS STOPS',
+      'places': 'ATTRACTIONS AND TERMINALS',
+      'back': '← Back',
+      'du': 'Weekdays',
+      'sab': 'Saturday',
+      'dom': 'Sunday',
+      'fromT': 'From the Terminal (TTU)',
+      'fromB': 'From the neighbourhood',
+      'fromC': 'From the City Centre',
+      'fromA': 'Outbound',
+      'fromV': 'Inbound',
+      'toB': 'outbound',
+      'toT': 'to Terminal',
+      'toA': 'outbound',
+      'toV': 'inbound',
+      'nextHere': 'NEXT BUS AT THIS POINT (ESTIMATED)',
+      'next': 'NEXT DEPARTURE FROM START',
+      'now': 'now',
+      'inmin': 'in {n} min',
+      'then': 'Then',
+      'nomore': 'There are no more scheduled trips today.',
+      'timetable': 'TIMETABLE',
+      'trips': 'TRIPS',
+      'showPast': 'Show earlier times ({n})',
+      'hidePast': 'Hide earlier times',
+      'stretch': 'Stretch selected on the map',
+      'allTimes': 'Show all times',
+      'tripOf': '{h} trip',
+      'route': 'Route',
+      'allRoutes': 'Show all routes',
+      'how': 'GETTING THERE BY BUS',
+      'deL': 'Where are you leaving from?',
+      'nearL': 'LINES PASSING NEARBY (WITHIN 500 M)',
+      'noNear': 'NEAREST LINES',
+      'board': 'Board',
+      'troca1': '1 transfer',
+      'direto': 'no transfer',
+      'pass': 'passes',
+      'noPass': 'no more trips today',
+      'goHere': 'Get here by bus',
+      'pickDest': 'Move the map until the pin is on your destination.',
+      'pickOrig': 'Move the map until the pin is where you leave from.',
+      'okDest': 'Go here',
+      'okOrig': 'Start here',
+      'cancel': 'Cancel',
+      'nearYou': 'Near you',
+      'myLoc': 'Your location',
+      'locDenied': 'Location permission denied.',
+    },
+  };
+
+  String _t(String k) => _i18n[_lang]?[k] ?? _i18n['pt']![k] ?? k;
 
   @override
   void initState() {
@@ -67,7 +268,8 @@ class _HomeScreenState extends State<HomeScreen> {
     MotorHorarios.inicializarDadosMapa(_d);
     _diaSel = MotorHorarios.tipoDia(_d);
     _atualizarDadosEmSegundoPlano();
-    _timerRt = Timer.periodic(const Duration(seconds: 30), (_) {
+    // Atualiza a posição dos ônibus a cada 15 segundos
+    _timerRt = Timer.periodic(const Duration(seconds: 15), (_) {
       _atualizarPosicoesRt();
     });
   }
@@ -76,6 +278,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _debounceGeo?.cancel();
     _timerRt?.cancel();
+    _sheetController.dispose();
     _searchController.dispose();
     _origemController.dispose();
     super.dispose();
@@ -110,11 +313,129 @@ class _HomeScreenState extends State<HomeScreen> {
           ids.add(leg.l.id);
         }
       }
+    } else {
+      for (final l in _linhasPublicas) {
+        if (_abaFamilia == 'all' ||
+            MotorHorarios.familiaLinha(l) == _abaFamilia) {
+          ids.add(l.id);
+        }
+      }
     }
     if (ids.isEmpty) return;
     final res = await _api.baixaRT(ids.toList());
     if (mounted) {
       setState(() => _veiculosRt = res.v);
+    }
+  }
+
+  void _arrastarPainel(DragUpdateDetails details) {
+    if (!_sheetController.isAttached) return;
+    final hTela = MediaQuery.of(context).size.height;
+    if (hTela <= 0) return;
+    final delta = (details.primaryDelta ?? 0) / hTela;
+    final novoTamanho = (_sheetController.size - delta).clamp(0.15, 0.90);
+    _sheetController.jumpTo(novoTamanho);
+  }
+
+  void _alternarAlturaPainel() {
+    if (!_sheetController.isAttached) return;
+    final atual = _sheetController.size;
+    final double alvo = atual < 0.30
+        ? 0.52
+        : atual < 0.75
+            ? 0.90
+            : 0.52;
+    _sheetController.animateTo(
+      alvo,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// Quando o usuário toca no ícone de um ônibus ao vivo no mapa:
+  /// Abre a linha e já seleciona a viagem específica que ele está percorrendo no momento
+  void _aoClicarNoOnibus(VeiculoTempoReal v) {
+    final l = _porId(v.linhaId);
+    if (l == null) return;
+    final dk = MotorHorarios.tipoDia(_d);
+    final d = l.dep[dk] ?? {};
+    String? s = v.sentido == '0'
+        ? 'T'
+        : v.sentido == '1'
+            ? 'B'
+            : null;
+    int idxViagem = -1;
+
+    int acharIndice(String k, int m) {
+      final lista = d[k] ?? [];
+      int j = lista.indexWhere((par) => par[0] == m);
+      if (j < 0 && m < 180) {
+        j = lista.indexWhere((par) => par[0] == m + 1440);
+      }
+      return j;
+    }
+
+    if (v.minSaida != null) {
+      if (s != null) {
+        idxViagem = acharIndice(s, v.minSaida!);
+      }
+      if (idxViagem < 0) {
+        final outro = (s == 'T') ? 'B' : 'T';
+        final j = acharIndice(outro, v.minSaida!);
+        if (j >= 0) {
+          s = outro;
+          idxViagem = j;
+        }
+      }
+    }
+
+    final sDisp =
+        ['T', 'B'].where((k) => (d[k]?.isNotEmpty ?? false)).toList();
+    final sentidoFinal = (s != null && sDisp.contains(s))
+        ? s
+        : (sDisp.isNotEmpty ? sDisp.first : 'T');
+
+    setState(() {
+      _destino = null;
+      _plano = null;
+      _trechoSel = null;
+      _linhaSelId = l.id;
+      _diaSel = dk;
+      _sentidoSel = sentidoFinal;
+      _viagemSelIdx = idxViagem >= 0 ? idxViagem : null;
+      if (idxViagem >= 0) {
+        _verPassados = true;
+      }
+    });
+
+    final pares = d[sentidoFinal] ?? [];
+    if (idxViagem >= 0 && idxViagem < pares.length) {
+      final si = pares[idxViagem][1];
+      final pts = l.shapes[si].p;
+      if (pts.length >= 2) {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds:
+                LatLngBounds.fromPoints([...pts, LatLng(v.lat, v.lon)]),
+            padding: const EdgeInsets.all(48),
+            maxZoom: 16.0,
+          ),
+        );
+      }
+    } else {
+      final pts = <LatLng>[];
+      for (final sh in l.shapes.where((x) => x.main == 1)) {
+        pts.addAll(sh.p);
+      }
+      if (pts.length >= 2) {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(pts),
+            padding: const EdgeInsets.all(48),
+            maxZoom: 16.0,
+          ),
+        );
+      }
     }
   }
 
@@ -128,7 +449,7 @@ class _HomeScreenState extends State<HomeScreen> {
           perm == LocationPermission.deniedForever) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Permissão de localização negada.')),
+            SnackBar(content: Text(_t('locDenied'))),
           );
         }
         return;
@@ -142,12 +463,12 @@ class _HomeScreenState extends State<HomeScreen> {
         _minhaLoc = ll;
         if (_destino != null && !_destino!.eu) {
           _origemManual = null;
-          _origemNome = 'Sua localização';
+          _origemNome = _t('myLoc');
           _origemController.text = _origemNome;
           _recalcularPlano();
         } else if (abrirPertoDeMim) {
           _definirDestino(
-              nome: 'Perto de você',
+              nome: _t('nearYou'),
               lat: ll.latitude,
               lon: ll.longitude,
               eu: true);
@@ -293,6 +614,10 @@ class _HomeScreenState extends State<HomeScreen> {
     LatLng? ptMaisPerto;
     LinhaOnibus? linhaMaisPerto;
     for (final l in _linhasPublicas) {
+      if (_abaFamilia != 'all' &&
+          MotorHorarios.familiaLinha(l) != _abaFamilia) {
+        continue;
+      }
       for (final s in l.shapes.where((x) => x.main == 1)) {
         final r = MotorHorarios.aoLongo(s, ll.latitude, ll.longitude);
         if (r.d < menorD) {
@@ -341,6 +666,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final lSel = _porId(_linhaSelId);
+    final uiScale = appScaleNotifier.value;
 
     return Scaffold(
       body: Stack(
@@ -377,16 +703,16 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
-          // Alfinete central ao escolher Partida/Destino no mapa
+          // Alfinete central em formato de gota vermelha ao escolher Partida/Destino no mapa
           if (_escolhendoNoMapa)
             const IgnorePointer(
               child: Center(
                 child: Padding(
-                  padding: EdgeInsets.only(bottom: 34),
+                  padding: EdgeInsets.only(bottom: 38),
                   child: Icon(
                     Icons.location_on,
-                    size: 44,
-                    color: Color(0xFFF07800),
+                    size: 48,
+                    color: _corVermelhoDestaque,
                   ),
                 ),
               ),
@@ -409,8 +735,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       Expanded(
                         child: Text(
                           _alvoAlfinete == 'para'
-                              ? 'Mova o mapa até o alfinete ficar no seu destino.'
-                              : 'Mova o mapa até o alfinete ficar no local de partida.',
+                              ? _t('pickDest')
+                              : _t('pickOrig'),
                           style: const TextStyle(
                               color: Colors.white, fontWeight: FontWeight.w600),
                         ),
@@ -418,8 +744,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(width: 8),
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppConfig.accentLight,
-                          foregroundColor: const Color(0xFF1A0F00),
+                          backgroundColor: _corVermelhoDestaque,
+                          foregroundColor: Colors.white,
                         ),
                         onPressed: () {
                           final c = _mapController.camera.center;
@@ -440,18 +766,84 @@ class _HomeScreenState extends State<HomeScreen> {
                           }
                         },
                         child: Text(
-                          _alvoAlfinete == 'para' ? 'Ir para cá' : 'Sair daqui',
+                          _alvoAlfinete == 'para'
+                              ? _t('okDest')
+                              : _t('okOrig'),
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                       ),
                       TextButton(
                         onPressed: () =>
                             setState(() => _escolhendoNoMapa = false),
-                        child: const Text('Cancelar',
-                            style: TextStyle(color: Colors.white70)),
+                        child: Text(_t('cancel'),
+                            style: const TextStyle(color: Colors.white70)),
                       ),
                     ],
                   ),
+                ),
+              ),
+            ),
+
+          // Controle de Tamanho de Botões e Textos (Acessibilidade A- / A+)
+          if (!_escolhendoNoMapa)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 10,
+              left: 10,
+              child: Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                elevation: 3,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    InkWell(
+                      borderRadius: const BorderRadius.horizontal(
+                          left: Radius.circular(8)),
+                      onTap: () => alterarEscalaApp(uiScale - 0.1),
+                      child: const Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        child: Text(
+                          'A-',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                            color: Color(0xFF14212B),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Container(width: 1, height: 20, color: Colors.black12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text(
+                        '${(uiScale * 100).round()}%',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF566777),
+                        ),
+                      ),
+                    ),
+                    Container(width: 1, height: 20, color: Colors.black12),
+                    InkWell(
+                      borderRadius: const BorderRadius.horizontal(
+                          right: Radius.circular(8)),
+                      onTap: () => alterarEscalaApp(uiScale + 0.1),
+                      child: const Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        child: Text(
+                          'A+',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 14.5,
+                            color: Color(0xFF12325B),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -466,20 +858,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   _BotaoMapa(
                     icone: Icons.my_location,
-                    rotulo: 'Onde estou',
+                    rotulo: _t('loc'),
+                    scale: uiScale,
                     onTap: () => _obterMinhaLocalizacao(abrirPertoDeMim: true),
                   ),
                   const SizedBox(height: 6),
                   _BotaoMapa(
                     icone: _satelite ? Icons.map : Icons.satellite_alt,
-                    rotulo: _satelite ? 'Mapa: Satélite' : 'Mapa: Ruas',
+                    rotulo: _satelite ? _t('map_sat') : _t('map_ruas'),
+                    scale: uiScale,
                     onTap: () => setState(() => _satelite = !_satelite),
                   ),
                   const SizedBox(height: 6),
                   _BotaoMapa(
                     icone: Icons.tv,
-                    rotulo: 'Painel TTU',
+                    rotulo: _t('painel_ttu'),
                     destaque: true,
+                    scale: uiScale,
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
@@ -495,11 +890,12 @@ class _HomeScreenState extends State<HomeScreen> {
           // 2. FOLHA INFERIOR RETRÁTIL
           if (!_escolhendoNoMapa)
             DraggableScrollableSheet(
+              controller: _sheetController,
               initialChildSize: 0.52,
-              minChildSize: 0.14,
+              minChildSize: 0.15,
               maxChildSize: 0.90,
               snap: true,
-              snapSizes: const [0.14, 0.52, 0.90],
+              snapSizes: const [0.15, 0.52, 0.90],
               builder: (context, scrollController) {
                 return Material(
                   color: isDark ? AppConfig.bgDark : AppConfig.bgLight,
@@ -509,46 +905,54 @@ class _HomeScreenState extends State<HomeScreen> {
                   clipBehavior: Clip.antiAlias,
                   child: Column(
                     children: [
-                      // Puxador (sheetbar)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 9),
-                        color: (lSel == null && _destino == null)
-                            ? (isDark
-                                ? AppConfig.brandDark
-                                : AppConfig.brandLight)
-                            : Colors.transparent,
-                        child: Center(
-                          child: Container(
-                            width: 44,
-                            height: 5,
-                            decoration: BoxDecoration(
-                              color: (lSel == null && _destino == null)
-                                  ? Colors.white54
-                                  : Colors.grey.withOpacity(0.5),
-                              borderRadius: BorderRadius.circular(3),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onVerticalDragUpdate: _arrastarPainel,
+                        onTap: _alternarAlturaPainel,
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          color: (lSel == null && _destino == null)
+                              ? (isDark
+                                  ? AppConfig.brandDark
+                                  : AppConfig.brandLight)
+                              : (isDark
+                                  ? AppConfig.panelDark
+                                  : AppConfig.bgLight),
+                          child: Center(
+                            child: Container(
+                              width: 48,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: (lSel == null && _destino == null)
+                                    ? Colors.white70
+                                    : Colors.grey.withOpacity(0.6),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
                             ),
                           ),
                         ),
                       ),
-                      if (lSel == null && _destino == null)
-                        _construirCabecalhoBusca(isDark)
-                      else if (lSel != null)
-                        _construirBarraLinha(lSel, isDark)
-                      else if (_destino != null)
-                        _construirBarraDestino(isDark),
-
+                      GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onVerticalDragUpdate: _arrastarPainel,
+                        child: (lSel == null && _destino == null)
+                            ? _construirCabecalhoBusca(isDark)
+                            : (lSel != null)
+                                ? _construirBarraLinha(lSel, isDark)
+                                : _construirBarraDestino(isDark),
+                      ),
                       Expanded(
                         child: ListView(
                           controller: scrollController,
                           padding: EdgeInsets.zero,
                           children: [
                             if (lSel != null)
-                              _construirDetalheLinha(lSel, isDark)
+                              _construirDetalheLinha(lSel, isDark, uiScale)
                             else if (_destino != null)
                               _construirPainelDestino(isDark)
                             else
-                              _construirListaInicial(isDark),
+                              _construirListaInicial(isDark, uiScale),
                           ],
                         ),
                       ),
@@ -654,7 +1058,12 @@ class _HomeScreenState extends State<HomeScreen> {
       return polylines;
     }
 
+    // Visão geral: filtra as linhas no mapa pela aba selecionada (Todas, 10–70, 101–120, 200–250, 310–380)
     for (final l in _linhasPublicas) {
+      if (_abaFamilia != 'all' &&
+          MotorHorarios.familiaLinha(l) != _abaFamilia) {
+        continue;
+      }
       for (final s in l.shapes.where((x) => x.main == 1)) {
         if (s.p.length < 2) continue;
         polylines.add(Polyline(
@@ -664,8 +1073,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ));
         polylines.add(Polyline(
           points: s.p,
-          color: l.cor.withOpacity(0.9),
-          strokeWidth: 3.2,
+          color: l.cor.withOpacity(0.92),
+          strokeWidth: 3.4,
         ));
       }
     }
@@ -677,7 +1086,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final stopsFiltrados = lSel != null
         ? _d.stops.where((s) => s.linhasAtivas
             .any((o) => o.id == lSel.id && (o.s.isEmpty || o.s == _sentidoSel)))
-        : _d.stops.where((s) => s.linhasAtivas.isNotEmpty);
+        : _d.stops.where((s) {
+            if (s.linhasAtivas.isEmpty) return false;
+            if (_abaFamilia == 'all') return true;
+            return s.linhasAtivas.any((o) {
+              final l = _porId(o.id);
+              return l != null &&
+                  MotorHorarios.familiaLinha(l) == _abaFamilia;
+            });
+          });
 
     for (final s in stopsFiltrados) {
       markers.add(
@@ -747,44 +1164,59 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<Marker> _construirMarkersEspeciais(LinhaOnibus? lSel) {
     final m = <Marker>[];
+
+    // 1. Minha localização GPS: Ponto de Radar Azul (diferente do pino de destino)
     if (_minhaLoc != null) {
       m.add(
         Marker(
           point: _minhaLoc!,
-          width: 20,
-          height: 20,
+          width: 28,
+          height: 28,
           child: Container(
             decoration: BoxDecoration(
-              color: AppConfig.accentLight,
+              color: _corGpsAzul.withOpacity(0.25),
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 3),
+            ),
+            padding: const EdgeInsets.all(5),
+            child: Container(
+              decoration: BoxDecoration(
+                color: _corGpsAzul,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2.5),
+                boxShadow: const [
+                  BoxShadow(color: Colors.black38, blurRadius: 4)
+                ],
+              ),
             ),
           ),
         ),
       );
     }
+
+    // 2. Trecho selecionado no mapa: Gota Vermelha
     if (_trechoSel != null) {
       m.add(
         Marker(
           point: _trechoSel!,
-          width: 22,
-          height: 22,
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppConfig.accentLight,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 3),
-            ),
+          width: 38,
+          height: 38,
+          alignment: Alignment.topCenter,
+          child: const Icon(
+            Icons.location_on,
+            size: 38,
+            color: _corVermelhoDestaque,
           ),
         ),
       );
     }
+
+    // 3. Partida escolhida manualmente: Marcador "A"
     if (_origemManual != null) {
       m.add(
         Marker(
           point: _origemManual!,
-          width: 24,
-          height: 24,
+          width: 26,
+          height: 26,
           child: Container(
             decoration: BoxDecoration(
               color: AppConfig.brandLight,
@@ -801,36 +1233,95 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
+
+    // 4. Destino pesquisado ou escolhido no mapa: Gota Vermelha grande
     if (_destino != null && !_destino!.eu) {
       m.add(
         Marker(
           point: LatLng(_destino!.lat, _destino!.lon),
-          width: 34,
-          height: 34,
-          child: const Icon(Icons.location_on,
-              size: 34, color: AppConfig.accentLight),
+          width: 44,
+          height: 44,
+          alignment: Alignment.topCenter,
+          child: const Icon(
+            Icons.location_on,
+            size: 44,
+            color: _corVermelhoDestaque,
+          ),
         ),
       );
     }
+
+    // 5. Marcadores de Saída e Chegada quando uma viagem específica está selecionada
+    if (lSel != null && _viagemSelIdx != null) {
+      final pares = (lSel.dep[_diaSel] ?? {})[_sentidoSel] ?? [];
+      if (_viagemSelIdx! < pares.length) {
+        final si = pares[_viagemSelIdx!][1];
+        final pts = lSel.shapes[si].p;
+        if (pts.length >= 2) {
+          m.add(
+            Marker(
+              point: pts.first,
+              width: 20,
+              height: 20,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: lSel.cor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 3),
+                ),
+              ),
+            ),
+          );
+          m.add(
+            Marker(
+              point: pts.last,
+              width: 20,
+              height: 20,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: lSel.cor, width: 4),
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    }
+
+    // 6. Ônibus em tempo real: Clicar nele abre a linha e a viagem atual daquele carro!
     for (final v in _veiculosRt) {
+      if (v.idadeSegundos > 300) continue;
       final l = _porId(v.linhaId);
       if (l == null) continue;
+      if (lSel != null && l.id != lSel.id) continue;
+      if (lSel == null &&
+          _abaFamilia != 'all' &&
+          MotorHorarios.familiaLinha(l) != _abaFamilia) {
+        continue;
+      }
+
       m.add(
         Marker(
+          key: ValueKey('bus_${v.prefixo}_${v.lat}_${v.lon}'),
           point: LatLng(v.lat, v.lon),
-          width: 32,
-          height: 32,
-          child: Container(
-            decoration: BoxDecoration(
-              color: l.cor,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2.5),
-              boxShadow: const [
-                BoxShadow(color: Colors.black45, blurRadius: 5)
-              ],
+          width: 36,
+          height: 36,
+          child: GestureDetector(
+            onTap: () => _aoClicarNoOnibus(v),
+            child: Container(
+              decoration: BoxDecoration(
+                color: l.cor,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2.5),
+                boxShadow: const [
+                  BoxShadow(color: Colors.black45, blurRadius: 5)
+                ],
+              ),
+              child: const Icon(Icons.directions_bus,
+                  color: Colors.white, size: 19),
             ),
-            child: const Icon(Icons.directions_bus,
-                color: Colors.white, size: 17),
           ),
         ),
       );
@@ -891,8 +1382,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   itemBuilder: (_, i) {
                     final x = itens[i];
                     final rotSent = x.l.ttu
-                        ? (x.k == 'T' ? 'sentido bairro' : 'sentido Terminal')
-                        : (x.k == 'T' ? 'ida' : 'volta');
+                        ? (x.k == 'T' ? _t('toB') : _t('toT'))
+                        : (x.k == 'T' ? _t('toA') : _t('toV'));
                     return InkWell(
                       onTap: () {
                         Navigator.pop(ctx);
@@ -924,7 +1415,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 width: double.infinity,
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.directions_bus),
-                  label: const Text('Como chegar de ônibus aqui'),
+                  label: Text(_t('goHere')),
                   onPressed: () {
                     Navigator.pop(ctx);
                     _definirDestino(
@@ -952,28 +1443,41 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Row(
             children: [
+              // Logo Foztrans.png direto de assets/Foztrans.png com cantos arredondados
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                height: 60,
+                constraints: const BoxConstraints(maxWidth: 120),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(7),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Text(
-                  'FOZTRANS',
-                  style: TextStyle(
-                    color: AppConfig.brandLight,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 13,
-                    letterSpacing: 0.5,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Image.asset(
+                      'assets/fozbus_logo.png',
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Text(
+                          'FOZTRANS',
+                          style: TextStyle(
+                            color: AppConfig.brandLight,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
               const SizedBox(width: 10),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Linhas de ônibus',
-                  style: TextStyle(
+                  _t('title'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
                     fontSize: 18,
@@ -992,12 +1496,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         onTap: () => setState(() => _lang = l),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 5),
+                              horizontal: 9, vertical: 6),
                           color: _lang == l ? Colors.white : Colors.transparent,
                           child: Text(
                             l.toUpperCase(),
                             style: TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 12,
                               fontWeight: FontWeight.w700,
                               color: _lang == l
                                   ? AppConfig.brandLight
@@ -1012,9 +1516,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const SizedBox(height: 10),
-          const Text(
-            'Para onde você quer ir?',
-            style: TextStyle(
+          Text(
+            _t('qlabel'),
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -1030,7 +1534,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: TextStyle(
                       color: isDark ? Colors.white : const Color(0xFF14212B)),
                   decoration: InputDecoration(
-                    hintText: 'Linha, ponto ou endereço…',
+                    hintText: _t('search'),
                     filled: true,
                     fillColor:
                         isDark ? AppConfig.panelDark : AppConfig.panelLight,
@@ -1053,24 +1557,26 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(width: 8),
+              // Botão de escolher destino no mapa em VERMELHO de destaque
               SizedBox(
-                height: 44,
-                width: 44,
+                height: 46,
+                width: 46,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     padding: EdgeInsets.zero,
-                    backgroundColor:
-                        isDark ? AppConfig.panelDark : AppConfig.panelLight,
-                    foregroundColor:
-                        isDark ? Colors.white : AppConfig.brandLight,
+                    backgroundColor: _corVermelhoDestaque,
+                    foregroundColor: Colors.white,
+                    elevation: 4,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                      borderRadius: BorderRadius.circular(10),
+                      side: const BorderSide(color: Colors.white, width: 1.5),
+                    ),
                   ),
                   onPressed: () => setState(() {
                     _alvoAlfinete = 'para';
                     _escolhendoNoMapa = true;
                   }),
-                  child: const Icon(Icons.place),
+                  child: const Icon(Icons.location_on, size: 24),
                 ),
               ),
             ],
@@ -1080,7 +1586,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _construirListaInicial(bool isDark) {
+  Widget _construirListaInicial(bool isDark, double uiScale) {
     final q = MotorHorarios.semAcento(_searchController.text.trim());
     final dk = MotorHorarios.tipoDia(_d);
     final ag = MotorHorarios.agoraMin();
@@ -1122,7 +1628,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppConfig.accentLight,
                     foregroundColor: const Color(0xFF1A0F00),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: EdgeInsets.symmetric(vertical: 12 * uiScale),
                     alignment: Alignment.centerLeft,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10)),
@@ -1131,9 +1637,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: EdgeInsets.only(left: 12),
                     child: Icon(Icons.my_location, size: 18),
                   ),
-                  label: const Text(
-                    'Ver linhas e pontos perto de mim',
-                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  label: Text(
+                    _t('nearBtn'),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 14),
                   ),
                   onPressed: () =>
                       _obterMinhaLocalizacao(abrirPertoDeMim: true),
@@ -1148,7 +1655,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Row(
                 children: [
                   for (final tab in [
-                    ('all', 'Todas'),
+                    ('all', _t('tall')),
                     ('f0', '10–70'),
                     ('f1', '101–120'),
                     ('f2', '200–250'),
@@ -1161,15 +1668,16 @@ class _HomeScreenState extends State<HomeScreen> {
                             style:
                                 const TextStyle(fontWeight: FontWeight.w600)),
                         selected: _abaFamilia == tab.$1,
-                        onSelected: (_) =>
-                            setState(() => _abaFamilia = tab.$1),
+                        onSelected: (_) {
+                          setState(() => _abaFamilia = tab.$1);
+                          _atualizarPosicoesRt();
+                        },
                       ),
                     ),
                 ],
               ),
             ),
 
-          // Lista de Linhas (usando Material + InkWell + Row, igual ao .lrow do HTML)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Column(
@@ -1194,8 +1702,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(10),
                       onTap: () => _selecionarLinha(l.id),
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 10),
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 10 * uiScale),
                         child: Row(
                           children: [
                             _BadgeLinha(linha: l),
@@ -1214,7 +1722,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     Padding(
                                       padding: const EdgeInsets.only(top: 2),
                                       child: Text(
-                                        'próx. saída ${MotorHorarios.hm(prox)}',
+                                        '${_t('nextdep')} ${MotorHorarios.hm(prox)}',
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: isDark
@@ -1242,29 +1750,30 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // Endereços e locais (Photon + Censo IBGE 2022)
           if (q.length >= 3) ...[
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
               child: Text(
-                'ENDEREÇOS E LOCAIS',
-                style: TextStyle(
+                _t('placesR'),
+                style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: Colors.grey),
               ),
             ),
             if (_buscandoGeo)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text('Procurando endereços e locais…',
-                    style: TextStyle(fontSize: 13, color: Colors.grey)),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(_t('geoLoad'),
+                    style: const TextStyle(fontSize: 13, color: Colors.grey)),
               )
             else if (_resultadosGeo.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text('Nada encontrado em Foz do Iguaçu com esse nome.',
-                    style: TextStyle(fontSize: 13, color: Colors.grey)),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(_t('geoNone'),
+                    style: const TextStyle(fontSize: 13, color: Colors.grey)),
               )
             else
               Padding(
@@ -1284,13 +1793,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
           ],
 
-          // Pontos de Parada encontrados na busca
           if (paradasBusca.isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
               child: Text(
-                'PONTOS DE PARADA',
-                style: TextStyle(
+                _t('stopsG'),
+                style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: Colors.grey),
@@ -1303,8 +1811,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   return _ItemLocalPin(
                     icone: 'P',
                     titulo: s.tituloExibicao(),
-                    subtitulo:
-                        (s.nome.isNotEmpty && s.endereco.isNotEmpty) ? s.endereco : '',
+                    subtitulo: (s.nome.isNotEmpty && s.endereco.isNotEmpty)
+                        ? s.endereco
+                        : '',
                     isDark: isDark,
                     onTap: () {
                       _mapController.move(LatLng(s.lat, s.lon), 17.0);
@@ -1316,13 +1825,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
 
-          // Pontos Turísticos e Terminais
           if (pois.isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
               child: Text(
-                'PONTOS TURÍSTICOS E TERMINAIS',
-                style: TextStyle(
+                _t('places'),
+                style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: Colors.grey),
@@ -1370,8 +1878,8 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 12),
             ),
             onPressed: () => _selecionarLinha(null),
-            child: const Text('← Voltar',
-                style: TextStyle(fontWeight: FontWeight.w700)),
+            child: Text(_t('back'),
+                style: const TextStyle(fontWeight: FontWeight.w700)),
           ),
           const SizedBox(width: 8),
           _BadgeLinha(linha: l, grande: true),
@@ -1390,7 +1898,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _construirDetalheLinha(LinhaOnibus l, bool isDark) {
+  Widget _construirDetalheLinha(LinhaOnibus l, bool isDark, double uiScale) {
     final hk = MotorHorarios.tipoDia(_d);
     final ehHoje = _diaSel == hk;
     final ag = MotorHorarios.agoraMin();
@@ -1426,13 +1934,23 @@ class _HomeScreenState extends State<HomeScreen> {
     final mv = MotorHorarios.marcasVar(l, _diaSel, _sentidoSel);
 
     String rotuloSentido(String s) {
-      if (!l.ttu) return s == 'T' ? 'Sentido ida' : 'Sentido volta';
+      if (!l.ttu) return s == 'T' ? _t('fromA') : _t('fromV');
       if (s == 'T') {
-        return (l.id == '10' || l.id == '380')
-            ? 'Saindo do Centro'
-            : 'Saindo do Terminal (TTU)';
+        return (l.id == '10' || l.id == '380') ? _t('fromC') : _t('fromT');
       }
-      return 'Saindo do bairro';
+      return _t('fromB');
+    }
+
+    // Informações da viagem selecionada (quando clicou num horário ou num ônibus no mapa)
+    String? tituloViagemSel;
+    String? rotaViagemSel;
+    if (_viagemSelIdx != null && _viagemSelIdx! < pares.length) {
+      final mViagem = pares[_viagemSelIdx!][0];
+      final siViagem = pares[_viagemSelIdx!][1];
+      tituloViagemSel =
+          _t('tripOf').replaceAll('{h}', MotorHorarios.hm(mViagem));
+      final nLimpo = MotorHorarios.nomeVarLimpo(l, siViagem);
+      rotaViagemSel = nLimpo.isNotEmpty ? nLimpo : l.nome;
     }
 
     return Padding(
@@ -1440,23 +1958,63 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Cartão da Viagem Selecionada (ao clicar no ônibus ou num horário)
+          if (tituloViagemSel != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: isDark ? AppConfig.panelDark : AppConfig.panelLight,
+                border: Border.all(color: l.cor, width: 2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          tituloViagemSel,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w800, fontSize: 15),
+                        ),
+                        if (rotaViagemSel != null)
+                          Text(
+                            '${_t('route')}: $rotaViagemSel',
+                            style: const TextStyle(
+                                fontSize: 12.5, color: Colors.grey),
+                          ),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _viagemSelIdx = null),
+                    child: Text(_t('allRoutes')),
+                  ),
+                ],
+              ),
+            ),
+
           if (_trechoSel != null)
             Container(
               margin: const EdgeInsets.only(bottom: 10),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
                 color: isDark ? AppConfig.panelDark : AppConfig.panelLight,
-                border: Border.all(color: AppConfig.accentLight, width: 2),
+                border: Border.all(color: _corVermelhoDestaque, width: 2),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Trecho selecionado no mapa',
-                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  Expanded(
+                    child: Text(_t('stretch'),
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                  ),
                   TextButton(
                     onPressed: () => setState(() => _trechoSel = null),
-                    child: const Text('Mostrar todos os horários'),
+                    child: Text(_t('allTimes')),
                   ),
                 ],
               ),
@@ -1465,9 +2023,9 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(
             children: [
               for (final d in [
-                ('DU', 'Dias úteis'),
-                ('SAB', 'Sábado'),
-                ('DOM', 'Domingo'),
+                ('DU', _t('du')),
+                ('SAB', _t('sab')),
+                ('DOM', _t('dom')),
               ])
                 Expanded(
                   child: Padding(
@@ -1483,7 +2041,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ? Colors.white
                             : (isDark ? Colors.white70 : Colors.black87),
                         elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        padding:
+                            EdgeInsets.symmetric(vertical: 10 * uiScale),
                       ),
                       onPressed: l.dep.containsKey(d.$1)
                           ? () => setState(() {
@@ -1519,7 +2078,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ? Colors.white
                             : (isDark ? Colors.white70 : Colors.black87),
                         elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        padding:
+                            EdgeInsets.symmetric(vertical: 10 * uiScale),
                       ),
                       onPressed: () => setState(() {
                         _sentidoSel = s;
@@ -1555,9 +2115,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _trechoSel != null
-                        ? 'PRÓXIMA PASSAGEM NESTE PONTO (ESTIMADO)'
-                        : 'PRÓXIMA SAÍDA DO PONTO INICIAL',
+                    _trechoSel != null ? _t('nextHere') : _t('next'),
                     style: const TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w700,
@@ -1577,8 +2135,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(width: 10),
                         Text(
                           (proximos.first.m - ag) <= 0
-                              ? 'agora'
-                              : 'em ${proximos.first.m - ag} min',
+                              ? _t('now')
+                              : _t('inmin')
+                                  .replaceAll('{n}', '${proximos.first.m - ag}'),
                           style: const TextStyle(
                               fontSize: 15, fontWeight: FontWeight.w600),
                         ),
@@ -1588,21 +2147,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          'Depois: ${proximos.skip(1).map((x) => MotorHorarios.hm(x.m)).join(' · ')}',
+                          '${_t('then')}: ${proximos.skip(1).map((x) => MotorHorarios.hm(x.m)).join(' · ')}',
                           style:
                               const TextStyle(fontSize: 13, color: Colors.grey),
                         ),
                       ),
                   ] else
-                    const Text(
-                        'Não há mais viagens programadas para hoje.'),
+                    Text(_t('nomore')),
                 ],
               ),
             ),
 
           const SizedBox(height: 14),
           Text(
-            'QUADRO DE HORÁRIOS · ${listaHorarios.length} VIAGENS',
+            '${_t('timetable')} · ${listaHorarios.length} ${_t('trips')}',
             style: const TextStyle(
                 fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey),
           ),
@@ -1610,8 +2168,8 @@ class _HomeScreenState extends State<HomeScreen> {
             TextButton(
               onPressed: () => setState(() => _verPassados = !_verPassados),
               child: Text(_verPassados
-                  ? 'Ocultar horários que já passaram'
-                  : 'Mostrar horários que já passaram ($nPassados)'),
+                  ? _t('hidePast')
+                  : _t('showPast').replaceAll('{n}', '$nPassados')),
             ),
           const SizedBox(height: 6),
 
@@ -1626,13 +2184,26 @@ class _HomeScreenState extends State<HomeScreen> {
                   proximos.isNotEmpty && item.idx == proximos.first.idx;
 
               return InkWell(
-                onTap: () => setState(() {
-                  _viagemSelIdx = selecionado ? null : item.idx;
-                }),
+                onTap: () {
+                  final novoIdx = selecionado ? null : item.idx;
+                  setState(() => _viagemSelIdx = novoIdx);
+                  if (novoIdx != null && novoIdx < pares.length) {
+                    final pts = l.shapes[pares[novoIdx][1]].p;
+                    if (pts.length >= 2) {
+                      _mapController.fitCamera(
+                        CameraFit.bounds(
+                          bounds: LatLngBounds.fromPoints(pts),
+                          padding: const EdgeInsets.all(48),
+                          maxZoom: 16.0,
+                        ),
+                      );
+                    }
+                  }
+                },
                 child: Container(
-                  width: mv.sig ? 88 : 68,
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  width: (mv.sig ? 88 : 68) * uiScale,
+                  padding: EdgeInsets.symmetric(
+                      vertical: 8 * uiScale, horizontal: 4),
                   decoration: BoxDecoration(
                     color: selecionado
                         ? l.bgc
@@ -1732,8 +2303,8 @@ class _HomeScreenState extends State<HomeScreen> {
               _plano = null;
               _opcaoPlanoSel = null;
             }),
-            child: const Text('← Voltar',
-                style: TextStyle(fontWeight: FontWeight.w700)),
+            child: Text(_t('back'),
+                style: const TextStyle(fontWeight: FontWeight.w700)),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1768,9 +2339,9 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!dest.eu) ...[
-            const Text(
-              'COMO CHEGAR DE ÔNIBUS',
-              style: TextStyle(
+            Text(
+              _t('how'),
+              style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                   color: Colors.grey),
@@ -1798,7 +2369,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     controller: _origemController,
                     readOnly: true,
                     decoration: InputDecoration(
-                      hintText: 'De onde você sai?',
+                      hintText: _t('deL'),
                       filled: true,
                       fillColor:
                           isDark ? AppConfig.panelDark : AppConfig.panelLight,
@@ -1812,13 +2383,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(width: 6),
                 IconButton(
-                  tooltip: 'Usar minha localização',
                   icon: const Icon(Icons.my_location),
                   onPressed: () => _obterMinhaLocalizacao(),
                 ),
                 IconButton(
-                  tooltip: 'Escolher a partida no mapa',
-                  icon: const Icon(Icons.place),
+                  icon: const Icon(Icons.location_on,
+                      color: _corVermelhoDestaque),
                   onPressed: () => setState(() {
                     _alvoAlfinete = 'de';
                     _escolhendoNoMapa = true;
@@ -1828,23 +2398,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 10),
             if (_plano != null) ...[
-              if (_plano!.pertoAPe)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    'O destino fica a ${_plano!.metrosDireto} m da partida: dá para ir a pé.',
-                    style: const TextStyle(fontSize: 13, color: Colors.grey),
-                  ),
-                ),
-              if (_plano!.ops.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'Não encontrei viagem para hoje a partir de agora, direta ou com uma troca. Veja abaixo as linhas que passam perto do destino.',
-                    style: TextStyle(fontSize: 13, color: Colors.grey),
-                  ),
-                )
-              else
+              if (_plano!.ops.isNotEmpty)
                 ..._plano!.ops.asMap().entries.map((entry) {
                   final i = entry.key;
                   final o = entry.value;
@@ -1882,13 +2436,13 @@ class _HomeScreenState extends State<HomeScreen> {
                               _BadgeLinha(linha: a.l),
                               const SizedBox(width: 8),
                               Text(
-                                'Embarque ≈ ${MotorHorarios.hm(a.t0)}',
+                                '${_t('board')} ≈ ${MotorHorarios.hm(a.t0)}',
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w800, fontSize: 18),
                               ),
                               const Spacer(),
                               Text(
-                                comTroca ? '1 troca' : 'sem troca',
+                                comTroca ? _t('troca1') : _t('direto'),
                                 style: const TextStyle(
                                     fontSize: 12.5, color: Colors.grey),
                               ),
@@ -1896,27 +2450,27 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const Divider(height: 16),
                           Text(
-                            '• A pé: ${MotorHorarios.arredonda10(o.rO ?? o.dO)} m até o ponto ${_d.stops[a.k0].tituloExibicao()}',
+                            '• A pé: ${MotorHorarios.arredonda10(o.rO ?? o.dO)} m → ${_d.stops[a.k0].tituloExibicao()}',
                             style: const TextStyle(fontSize: 13),
                           ),
                           if (comTroca) ...[
                             const SizedBox(height: 4),
                             Text(
                               o.ttu
-                                  ? '• Troca dentro do Terminal (TTU) ≈ ${MotorHorarios.hm(a.t1)} (espera ≈ ${z.t0 - a.t1} min)'
-                                  : '• Desça em ${_d.stops[a.k1].tituloExibicao()} ≈ ${MotorHorarios.hm(a.t1)} e pegue a linha ${z.l.id} ≈ ${MotorHorarios.hm(z.t0)}',
+                                  ? '• Terminal (TTU) ≈ ${MotorHorarios.hm(a.t1)} → Linha ${z.l.id} ≈ ${MotorHorarios.hm(z.t0)}'
+                                  : '• ${_d.stops[a.k1].tituloExibicao()} ≈ ${MotorHorarios.hm(a.t1)} → Linha ${z.l.id} ≈ ${MotorHorarios.hm(z.t0)}',
                               style: const TextStyle(
                                   fontSize: 13, fontWeight: FontWeight.w600),
                             ),
                           ],
                           const SizedBox(height: 4),
                           Text(
-                            '• Desça em ${_d.stops[z.k1].tituloExibicao()} ≈ ${MotorHorarios.hm(z.t1)} (${o.dD <= 200 ? "ao lado do destino" : "${MotorHorarios.arredonda10(o.rD ?? o.dD)} m até o destino"})',
+                            '• ${_d.stops[z.k1].tituloExibicao()} ≈ ${MotorHorarios.hm(z.t1)}',
                             style: const TextStyle(fontSize: 13),
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Chegada ≈ ${MotorHorarios.hm(o.chega)} · ${o.chega - o.sai} min de viagem',
+                            '≈ ${MotorHorarios.hm(o.chega)} · ${o.chega - o.sai} min',
                             style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 13.5,
@@ -1932,9 +2486,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
 
           Text(
-            perto500.isNotEmpty
-                ? 'LINHAS QUE PASSAM PERTO (ATÉ 500 M)'
-                : 'LINHAS MAIS PRÓXIMAS',
+            perto500.isNotEmpty ? _t('nearL') : _t('noNear'),
             style: const TextStyle(
                 fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey),
           ),
@@ -1944,7 +2496,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 MotorHorarios.passagens(x.l, dk, dest.lat, dest.lon, 500.0);
             final resumoPs = ['T', 'B']
                 .where((k) => ps.containsKey(k))
-                .map((k) => 'passa ≈ ${MotorHorarios.hm(ps[k]!)}')
+                .map((k) => '${_t('pass')} ≈ ${MotorHorarios.hm(ps[k]!)}')
                 .join(' · ');
 
             return Padding(
@@ -1971,7 +2523,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       fontWeight: FontWeight.w600)),
                               const SizedBox(height: 2),
                               Text(
-                                'a ${MotorHorarios.arredonda10(x.d)} m${resumoPs.isNotEmpty ? ' · $resumoPs' : ' · sem mais viagens hoje'}',
+                                '${MotorHorarios.arredonda10(x.d)} m · ${resumoPs.isNotEmpty ? resumoPs : _t('noPass')}',
                                 style: const TextStyle(
                                     fontSize: 12.5, color: Colors.grey),
                               ),
@@ -2100,12 +2652,14 @@ class _BotaoMapa extends StatelessWidget {
   final String rotulo;
   final VoidCallback onTap;
   final bool destaque;
+  final double scale;
 
   const _BotaoMapa({
     required this.icone,
     required this.rotulo,
     required this.onTap,
     this.destaque = false,
+    this.scale = 1.0,
   });
 
   @override
@@ -2118,12 +2672,13 @@ class _BotaoMapa extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: EdgeInsets.symmetric(
+              horizontal: 10 * scale, vertical: 8 * scale),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icone,
-                  size: 16,
+                  size: 16 * scale,
                   color: destaque ? Colors.white : const Color(0xFF14212B)),
               const SizedBox(width: 6),
               Text(
