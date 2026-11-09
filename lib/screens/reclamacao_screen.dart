@@ -33,6 +33,17 @@ class _CategoriaInfo {
   });
 }
 
+class _FotoAnexo {
+  final Uint8List bytes;
+  final String nome;
+  final String ext;
+  const _FotoAnexo({
+    required this.bytes,
+    required this.nome,
+    required this.ext,
+  });
+}
+
 class ReclamacaoScreen extends StatefulWidget {
   final List<LinhaOnibus> linhas;
   const ReclamacaoScreen({super.key, required this.linhas});
@@ -42,6 +53,9 @@ class ReclamacaoScreen extends StatefulWidget {
 }
 
 class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
+  static const int _maxFotos = 5;
+  static const int _maxBytesTotal = 10 * 1024 * 1024; // 10 MB
+
   final SupabaseService _supa = SupabaseService();
   final TextEditingController _prefixoCtrl = TextEditingController();
   final TextEditingController _horarioCtrl = TextEditingController();
@@ -50,8 +64,7 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
 
   _CategoriaInfo? _catSelecionada;
   String? _linhaSelecionada;
-  Uint8List? _fotoBytes;
-  String _fotoNome = '';
+  final List<_FotoAnexo> _fotos = [];
   bool _enviando = false;
 
   static const List<_CategoriaInfo> _categorias = [
@@ -138,21 +151,67 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
     super.dispose();
   }
 
-  Future<void> _escolherFoto() async {
+  int get _bytesAtuais =>
+      _fotos.fold<int>(0, (soma, item) => soma + item.bytes.length);
+
+  String _formatarTamanhoMb(int bytes) {
+    final mb = bytes / (1024 * 1024);
+    return mb.toStringAsFixed(1) + ' MB';
+  }
+
+  Future<void> _escolherFotos() async {
+    if (_fotos.length >= _maxFotos) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Você já anexou o limite máximo de 5 imagens.')),
+      );
+      return;
+    }
+
     try {
       final picker = ImagePicker();
-      final xfile = await picker.pickImage(
-        source: ImageSource.gallery,
+      final selecionadas = await picker.pickMultiImage(
         maxWidth: 1280,
         maxHeight: 1280,
         imageQuality: 78,
       );
-      if (xfile != null) {
-        final bytes = await xfile.readAsBytes();
-        setState(() {
-          _fotoBytes = bytes;
-          _fotoNome = xfile.name;
-        });
+      if (selecionadas.isEmpty) return;
+
+      int totalBytes = _bytesAtuais;
+      final novas = <_FotoAnexo>[];
+      bool excedeuTamanho = false;
+      bool excedeuQtd = false;
+
+      for (final xfile in selecionadas) {
+        if (_fotos.length + novas.length >= _maxFotos) {
+          excedeuQtd = true;
+          break;
+        }
+        final b = await xfile.readAsBytes();
+        if (totalBytes + b.length > _maxBytesTotal) {
+          excedeuTamanho = true;
+          continue;
+        }
+        totalBytes += b.length;
+        final ext = xfile.name.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
+        novas.add(_FotoAnexo(bytes: b, nome: xfile.name, ext: ext));
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _fotos.addAll(novas);
+      });
+
+      if (excedeuTamanho) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'Algumas imagens não foram adicionadas para não ultrapassar o limite total de 10 MB.')),
+        );
+      } else if (excedeuQtd) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Limite máximo de 5 imagens atingido.')),
+        );
       }
     } catch (_) {}
   }
@@ -174,9 +233,11 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
 
   Future<void> _enviar() async {
     final cat = _catSelecionada!;
-    if (cat.pedeLinha && (_linhaSelecionada == null || _linhaSelecionada!.isEmpty)) {
+    if (cat.pedeLinha &&
+        (_linhaSelecionada == null || _linhaSelecionada!.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Por favor, selecione a linha de ônibus.')),
+        const SnackBar(
+            content: Text('Por favor, selecione a linha de ônibus.')),
       );
       return;
     }
@@ -189,7 +250,6 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
     }
 
     setState(() => _enviando = true);
-    final ext = _fotoNome.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
     final res = await _supa.enviarReclamacao(
       categoria: cat.id,
       linha: _linhaSelecionada ?? '',
@@ -197,8 +257,7 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
       horarioOcorrido: _horarioCtrl.text,
       localOuTela: _localCtrl.text,
       descricao: _descCtrl.text,
-      fotoBytes: _fotoBytes,
-      fotoExt: ext,
+      fotos: _fotos.map((f) => (bytes: f.bytes, ext: f.ext)).toList(),
     );
 
     if (!mounted) return;
@@ -208,13 +267,28 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
       await showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Relato enviado!'),
+          title: const Text(
+            'Relato enviado!',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
           content: const Text(
-              'Sua mensagem foi registrada e enviada diretamente para a equipe do Foztrans. Obrigado por ajudar a melhorar o transporte de Foz do Iguaçu!'),
+            'Sua mensagem foi registrada e enviada diretamente para a equipe do Foztrans. Obrigado por ajudar a melhorar o transporte de Foz do Iguaçu!',
+          ),
           actions: [
             ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppConfig.accentLight,
+                foregroundColor: const Color(0xFF1A0F00),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Fechar'),
+              child: const Text(
+                'Fechar',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+              ),
             ),
           ],
         ),
@@ -374,7 +448,7 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. Seletor de Linha (só aparece se a categoria exigir linha)
+              // 1. Seletor de Linha
               if (cat.pedeLinha) ...[
                 const Text('Linha de Ônibus *',
                     style:
@@ -401,7 +475,7 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
                 const SizedBox(height: 14),
               ],
 
-              // 2. Prefixo do Ônibus e Horário (só aparecem quando faz sentido!)
+              // 2. Prefixo do Ônibus (5 dígitos: ex 11035) e Horário
               if (cat.pedePrefixo || cat.pedeHorario) ...[
                 Row(
                   children: [
@@ -416,8 +490,11 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
                             const SizedBox(height: 6),
                             TextField(
                               controller: _prefixoCtrl,
+                              keyboardType: TextInputType.number,
+                              maxLength: 5,
                               decoration: InputDecoration(
-                                hintText: 'Ex: 1420 (se souber)',
+                                counterText: '',
+                                hintText: 'Ex: 11035 (se souber)',
                                 border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(10)),
                                 contentPadding: const EdgeInsets.symmetric(
@@ -493,43 +570,106 @@ class _ReclamacaoScreenState extends State<ReclamacaoScreen> {
               ),
               const SizedBox(height: 16),
 
-              // 5. Anexo de Foto / Print da tela
-              const Text('Foto ou Print da Tela (Opcional)',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-              const SizedBox(height: 8),
-              if (_fotoBytes != null)
-                Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.memory(
-                        _fotoBytes!,
-                        height: 170,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
+              // 5. Anexo de até 5 Fotos (Máximo 10 MB no total)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Fotos ou Prints (Até 5 imagens)',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                  Text(
+                    _fotos.length.toString() +
+                        '/5 · ' +
+                        _formatarTamanhoMb(_bytesAtuais) +
+                        ' / 10 MB',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppConfig.accentLight,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+
+              if (_fotos.isNotEmpty) ...[
+                SizedBox(
+                  height: 110,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _fotos.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (_, idx) {
+                      final f = _fotos[idx];
+                      return Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.memory(
+                              f.bytes,
+                              width: 110,
+                              height: 110,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          Positioned(
+                            top: 4,
+                            right: 4,
+                            child: GestureDetector(
+                              onTap: () =>
+                                  setState(() => _fotos.removeAt(idx)),
+                              child: Container(
+                                decoration: const BoxDecoration(
+                                  color: Colors.black87,
+                                  shape: BoxShape.circle,
+                                ),
+                                padding: const EdgeInsets.all(4),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              // Botão com alto contraste (Azul escuro no claro / Laranja vibrante no escuro)
+              if (_fotos.length < _maxFotos)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isDark
+                          ? AppConfig.accentLight
+                          : AppConfig.brandLight,
+                      foregroundColor:
+                          isDark ? const Color(0xFF1A0F00) : Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: CircleAvatar(
-                        backgroundColor: Colors.black87,
-                        child: IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white),
-                          onPressed: () => setState(() {
-                            _fotoBytes = null;
-                            _fotoNome = '';
-                          }),
-                        ),
-                      ),
+                    icon: const Icon(Icons.add_a_photo_rounded, size: 20),
+                    label: Text(
+                      _fotos.isEmpty
+                          ? 'Adicionar imagens da galeria'
+                          : 'Adicionar mais imagens (' +
+                              (_maxFotos - _fotos.length).toString() +
+                              ' restantes)',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w800, fontSize: 14),
                     ),
-                  ],
-                )
-              else
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.add_a_photo_outlined),
-                  label: const Text('Anexar imagem da galeria'),
-                  onPressed: _escolherFoto,
+                    onPressed: _escolherFotos,
+                  ),
                 ),
 
               const SizedBox(height: 22),

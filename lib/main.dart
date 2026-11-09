@@ -14,11 +14,50 @@ void main() async {
 class MobiFozApp extends StatelessWidget {
   const MobiFozApp({super.key});
 
+  /// Retorna a matriz óptica de correção de cores para aplicar sobre a tela inteira
+  ColorFilter _obterFiltroDaltonismo(String modo) {
+    switch (modo) {
+      case 'deuteranopia':
+        // Filtro para Deuteranopia (ajuda a diferenciar Verde / Vermelho)
+        return const ColorFilter.matrix(<double>[
+          0.625, 0.375, 0.0,   0, 0,
+          0.700, 0.300, 0.0,   0, 0,
+          0.0,   0.300, 0.700, 0, 0,
+          0,     0,     0,     1, 0,
+        ]);
+      case 'protanopia':
+        // Filtro para Protanopia (compensa a perda de sensibilidade ao Vermelho)
+        return const ColorFilter.matrix(<double>[
+          0.567, 0.433, 0.0,   0, 0,
+          0.558, 0.442, 0.0,   0, 0,
+          0.0,   0.242, 0.758, 0, 0,
+          0,     0,     0,     1, 0,
+        ]);
+      case 'tritanopia':
+        // Filtro para Tritanopia (compensa confusão entre Azul / Amarelo)
+        return const ColorFilter.matrix(<double>[
+          0.950, 0.050, 0.0,   0, 0,
+          0.0,   0.433, 0.567, 0, 0,
+          0.0,   0.475, 0.525, 0, 0,
+          0,     0,     0,     1, 0,
+        ]);
+      default:
+        // Matriz identidade (cores originais sem alteração)
+        return const ColorFilter.matrix(<double>[
+          1, 0, 0, 0, 0,
+          0, 1, 0, 0, 0,
+          0, 0, 1, 0, 0,
+          0, 0, 0, 1, 0,
+        ]);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: appSettings,
       builder: (context, _) {
+        final modoCor = appSettings.modoDaltonismo;
         return MaterialApp(
           title: 'FozBus · FOZTRANS',
           debugShowCheckedModeBanner: false,
@@ -47,11 +86,20 @@ class MobiFozApp extends StatelessWidget {
           ),
           builder: (context, child) {
             final mq = MediaQuery.of(context);
-            return MediaQuery(
+            Widget tela = MediaQuery(
               data: mq.copyWith(
                   textScaler: TextScaler.linear(appSettings.uiScale)),
               child: child!,
             );
+
+            // Se algum modo daltônico estiver ativo, aplica o filtro na tela inteira!
+            if (modoCor != 'normal') {
+              tela = ColorFiltered(
+                colorFilter: _obterFiltroDaltonismo(modoCor),
+                child: tela,
+              );
+            }
+            return tela;
           },
           home: const _InicializadorScreen(),
         );

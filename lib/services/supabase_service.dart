@@ -183,12 +183,14 @@ class SupabaseService {
     } catch (_) {}
   }
 
-  /// Faz upload da foto anexada para o Supabase Storage e retorna o link público
-  Future<String?> enviarFoto(Uint8List bytes, String extensao) async {
+  /// Faz upload de uma foto anexada para o Supabase Storage e retorna o link público
+  Future<String?> enviarFoto(Uint8List bytes, String extensao, int index) async {
     if (!configurado) return null;
     try {
       final nomeArq = 'foto_' +
           DateTime.now().millisecondsSinceEpoch.toString() +
+          '_' +
+          index.toString() +
           '.' +
           extensao;
       final uri = Uri.parse(
@@ -203,7 +205,7 @@ class SupabaseService {
             },
             body: bytes,
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 20));
 
       if (resp.statusCode == 200 || resp.statusCode == 201) {
         return supabaseUrl +
@@ -214,7 +216,7 @@ class SupabaseService {
     return null;
   }
 
-  /// Envia a reclamação / ocorrência para o Supabase
+  /// Envia a reclamação / ocorrência para o Supabase (com suporte a até 5 fotos)
   Future<String> enviarReclamacao({
     required String categoria,
     required String linha,
@@ -222,8 +224,7 @@ class SupabaseService {
     required String horarioOcorrido,
     required String localOuTela,
     required String descricao,
-    Uint8List? fotoBytes,
-    String fotoExt = 'jpg',
+    List<({Uint8List bytes, String ext})> fotos = const [],
   }) async {
     if (!configurado) {
       return 'Configure a URL e a chave do Supabase em lib/services/supabase_service.dart';
@@ -232,11 +233,11 @@ class SupabaseService {
     try {
       final deviceId = await obterDeviceId();
       final ip = await obterIpPublico();
-      String fotoUrl = '';
+      final urlsFotos = <String>[];
 
-      if (fotoBytes != null) {
-        final urlUp = await enviarFoto(fotoBytes, fotoExt);
-        if (urlUp != null) fotoUrl = urlUp;
+      for (int i = 0; i < fotos.length; i++) {
+        final urlUp = await enviarFoto(fotos[i].bytes, fotos[i].ext, i);
+        if (urlUp != null) urlsFotos.add(urlUp);
       }
 
       final uri = Uri.parse(supabaseUrl + '/rest/v1/reclamacoes');
@@ -247,20 +248,20 @@ class SupabaseService {
         'horario_ocorrido': horarioOcorrido.trim(),
         'local_ou_tela': localOuTela.trim(),
         'descricao': descricao.trim(),
-        'foto_url': fotoUrl,
+        'foto_url': urlsFotos.join(','),
         'device_id': deviceId,
         'ip_usuario': ip,
       });
 
       final resp = await http
           .post(uri, headers: _headers, body: body)
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 12));
 
       if (resp.statusCode == 200 || resp.statusCode == 201) {
         return 'OK';
       }
       if (resp.body.contains('USUARIO_BLOQUEADO')) {
-        return 'Seu acesso para envio de mensagens foi bloqueado pela moderação do Foztrans.';
+        return 'Tu enviou muitas mensagens em curto período de tempo. Tente novamente mais tarde.';
       }
       return 'Não foi possível enviar no momento (Código ' +
           resp.statusCode.toString() +
