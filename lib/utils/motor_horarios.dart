@@ -304,16 +304,49 @@ class MotorHorarios {
                 ? 'f2'
                 : 'f3';
   }
+  /// Paletas de cores das famílias adaptadas para cada tipo de visão / daltonismo
+  static Map<String, String> _paletaPorModo(String modo) {
+    switch (modo) {
+      case 'deuteranopia':
+        return const {
+          'f0': '#D55E00', // Vermelhão/Laranja forte
+          'f1': '#0072B2', // Azul oceano
+          'f2': '#009E73', // Verde-azulado (Teal)
+          'f3': '#CC79A7', // Magenta/Roxo claro
+          'fe': '#E69F00', // Âmbar
+        };
+      case 'protanopia':
+        return const {
+          'f0': '#E69F00', // Laranja dourado
+          'f1': '#0072B2', // Azul forte
+          'f2': '#56B4E9', // Azul celeste
+          'f3': '#CC79A7', // Magenta
+          'fe': '#D55E00', // Ocre escuro
+        };
+      case 'tritanopia':
+        return const {
+          'f0': '#D92120', // Carmesim
+          'f1': '#008080', // Teal profundo
+          'f2': '#114477', // Azul marinho
+          'f3': '#AA3377', // Ameixa/Vinho
+          'fe': '#882255', // Bordô
+        };
+      default:
+        return AppConfig.familiaCoresHex;
+    }
+  }
 
-  /// Inicializa cores, filtra viagens ESP e vincula paradas (idêntico ao início do `app(D)` no index.html)
-  static void inicializarDadosMapa(DadosTransporteGeral d) {
+/// Inicializa cores (com suporte a daltonismo), filtra viagens ESP e vincula paradas
+  static void inicializarDadosMapa(DadosTransporteGeral d,
+      {String modoDaltonismo = 'normal'}) {
     const shOffsets = [0, -14, 12, -24, 20, -6, 28];
     final idx = <String, int>{};
+    final paleta = _paletaPorModo(modoDaltonismo);
 
     for (final l in d.linhas) {
       final f = familiaLinha(l);
       idx[f] = idx[f] ?? 0;
-      final baseHex = AppConfig.familiaCoresHex[f] ?? '#1c62b9';
+      final baseHex = paleta[f] ?? '#1c62b9';
       l.cor = shadeColor(baseHex, shOffsets[idx[f]! % shOffsets.length]);
       final ft = fundoTinta(l.cor);
       l.bgc = ft[0];
@@ -331,12 +364,12 @@ class MotorHorarios {
         if (k >= 0) l.shapes[k].main = 1;
       }
 
-      // Normaliza horários < 180 (+1440), ordena e remove viagens ESP para o público
       l.dep.forEach((dk, sentidosMap) {
         final chavesRemover = <String>[];
         sentidosMap.forEach((sKey, listaPares) {
           final normalizados = listaPares
-              .where((x) => x[1] >= 0 && x[1] < l.shapes.length && !l.shapes[x[1]].esp)
+              .where((x) =>
+                  x[1] >= 0 && x[1] < l.shapes.length && !l.shapes[x[1]].esp)
               .map((x) => [x[0] < 180 ? x[0] + 1440 : x[0], x[1]])
               .toList()
             ..sort((a, b) => a[0].compareTo(b[0]));
@@ -850,7 +883,7 @@ class MotorHorarios {
     return null;
   }
 
-  static ResultadoPlanejamento planejarViagem(
+ static ResultadoPlanejamento planejarViagem(
     DadosTransporteGeral d,
     LatLng origem,
     LatLng destino, {
@@ -881,8 +914,9 @@ class MotorHorarios {
             for (final q in pts) {
               if (q.k == k) {
                 final key = '${l.id}|$si';
-                por.putIfAbsent(key, () => []).add(
-                    (l: l, si: si, k: k, f: q.f, d: distP));
+                por
+                    .putIfAbsent(key, () => [])
+                    .add((l: l, si: si, k: k, f: q.f, d: distP));
               }
             }
           }
@@ -990,7 +1024,8 @@ class MotorHorarios {
         for (final pa in ptsA) {
           final stopA = d.stops[pa.k];
           for (final pb in ptsB) {
-            if (x.l.id == e.l.id && !(_noTTU(stopA) && _noTTU(d.stops[pb.k]))) {
+            if (x.l.id == e.l.id &&
+                !(_noTTU(stopA) && _noTTU(d.stops[pb.k]))) {
               continue;
             }
             final stopB = d.stops[pb.k];

@@ -4,10 +4,11 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import '../config/app_config.dart';
-import '../main.dart';
+import '../config/app_settings.dart';
 import '../models/transporte_models.dart';
 import '../services/api_service.dart';
 import '../utils/motor_horarios.dart';
+import 'configuracoes_screen.dart';
 import 'painel_ttu_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -30,10 +31,9 @@ class _HomeScreenState extends State<HomeScreen> {
   static const Color _corGpsAzul = Color(0xFF0B57D0);
 
   late DadosTransporteGeral _d;
-  String _lang = 'pt';
   String _abaFamilia = 'all'; // 'all', 'f0', 'f1', 'f2', 'f3'
-  bool _satelite = false;
   double _zoomAtual = 12.2;
+  double _sheetFraction = 0.52; // Acompanha a altura da aba inferior para o botão Onde Estou
 
   // Estado de seleção
   String? _linhaSelId;
@@ -66,7 +66,6 @@ class _HomeScreenState extends State<HomeScreen> {
   List<VeiculoTempoReal> _veiculosRt = [];
   Timer? _timerRt;
 
-  // Dicionário de Idiomas (PT / ES / EN)
   static const Map<String, Map<String, String>> _i18n = {
     'pt': {
       'title': 'Linhas de ônibus',
@@ -75,8 +74,6 @@ class _HomeScreenState extends State<HomeScreen> {
       'nearBtn': 'Ver linhas e pontos perto de mim',
       'tall': 'Todas',
       'loc': 'Onde estou',
-      'map_ruas': 'Mapa: Ruas',
-      'map_sat': 'Mapa: Satélite',
       'painel_ttu': 'Painel TTU',
       'nextdep': 'próx. saída',
       'placesR': 'ENDEREÇOS E LOCAIS',
@@ -109,9 +106,9 @@ class _HomeScreenState extends State<HomeScreen> {
       'hidePast': 'Ocultar horários que já passaram',
       'stretch': 'Trecho selecionado no mapa',
       'allTimes': 'Mostrar todos os horários',
-      'tripOf': 'Viagem das {h}',
+      'tripOf': 'Meia-viagem das {h}',
       'route': 'Trajeto',
-      'allRoutes': 'Mostrar todos os trajetos',
+      'allRoutes': 'Ver meia-viagem atual',
       'how': 'COMO CHEGAR DE ÔNIBUS',
       'deL': 'De onde você sai?',
       'nearL': 'LINHAS QUE PASSAM PERTO (ATÉ 500 M)',
@@ -138,8 +135,6 @@ class _HomeScreenState extends State<HomeScreen> {
       'nearBtn': 'Ver líneas y paradas cerca de mí',
       'tall': 'Todas',
       'loc': 'Dónde estoy',
-      'map_ruas': 'Mapa: Calles',
-      'map_sat': 'Mapa: Satélite',
       'painel_ttu': 'Panel TTU',
       'nextdep': 'próx. salida',
       'placesR': 'DIRECCIONES Y LUGARES',
@@ -172,9 +167,9 @@ class _HomeScreenState extends State<HomeScreen> {
       'hidePast': 'Ocultar horarios que ya pasaron',
       'stretch': 'Tramo seleccionado en el mapa',
       'allTimes': 'Mostrar todos los horarios',
-      'tripOf': 'Viaje de las {h}',
+      'tripOf': 'Medio viaje de las {h}',
       'route': 'Recorrido',
-      'allRoutes': 'Mostrar todos los recorridos',
+      'allRoutes': 'Ver medio viaje actual',
       'how': 'CÓMO LLEGAR EN AUTOBÚS',
       'deL': '¿De dónde sale?',
       'nearL': 'LÍNEAS QUE PASAN CERCA (HASTA 500 M)',
@@ -201,8 +196,6 @@ class _HomeScreenState extends State<HomeScreen> {
       'nearBtn': 'See lines and stops near me',
       'tall': 'All',
       'loc': 'Where am I',
-      'map_ruas': 'Map: Streets',
-      'map_sat': 'Map: Satellite',
       'painel_ttu': 'TTU Board',
       'nextdep': 'next dep.',
       'placesR': 'ADDRESSES AND PLACES',
@@ -235,9 +228,9 @@ class _HomeScreenState extends State<HomeScreen> {
       'hidePast': 'Hide earlier times',
       'stretch': 'Stretch selected on the map',
       'allTimes': 'Show all times',
-      'tripOf': '{h} trip',
+      'tripOf': '{h} half-trip',
       'route': 'Route',
-      'allRoutes': 'Show all routes',
+      'allRoutes': 'View current half-trip',
       'how': 'GETTING THERE BY BUS',
       'deL': 'Where are you leaving from?',
       'nearL': 'LINES PASSING NEARBY (WITHIN 500 M)',
@@ -259,25 +252,37 @@ class _HomeScreenState extends State<HomeScreen> {
     },
   };
 
-  String _t(String k) => _i18n[_lang]?[k] ?? _i18n['pt']![k] ?? k;
+  String _t(String k) =>
+      _i18n[appSettings.lang]?[k] ?? _i18n['pt']![k] ?? k;
 
   @override
   void initState() {
     super.initState();
     _d = widget.dadosIniciais;
-    MotorHorarios.inicializarDadosMapa(_d);
+    MotorHorarios.inicializarDadosMapa(_d,
+        modoDaltonismo: appSettings.modoDaltonismo);
     _diaSel = MotorHorarios.tipoDia(_d);
+    _sheetController.addListener(_aoMoverSheet);
     _atualizarDadosEmSegundoPlano();
-    // Atualiza a posição dos ônibus a cada 15 segundos
     _timerRt = Timer.periodic(const Duration(seconds: 15), (_) {
       _atualizarPosicoesRt();
     });
+  }
+
+  void _aoMoverSheet() {
+    if (_sheetController.isAttached) {
+      final sz = _sheetController.size;
+      if ((sz - _sheetFraction).abs() > 0.005) {
+        setState(() => _sheetFraction = sz);
+      }
+    }
   }
 
   @override
   void dispose() {
     _debounceGeo?.cancel();
     _timerRt?.cancel();
+    _sheetController.removeListener(_aoMoverSheet);
     _sheetController.dispose();
     _searchController.dispose();
     _origemController.dispose();
@@ -297,7 +302,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (novo != null && mounted) {
       setState(() {
         _d = novo;
-        MotorHorarios.inicializarDadosMapa(_d);
+        MotorHorarios.inicializarDadosMapa(_d,
+            modoDaltonismo: appSettings.modoDaltonismo);
       });
     }
     _atualizarPosicoesRt();
@@ -352,8 +358,45 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Quando o usuário toca no ícone de um ônibus ao vivo no mapa:
-  /// Abre a linha e já seleciona a viagem específica que ele está percorrendo no momento
+  /// Determina qual shape (`si`) é a meia-viagem ativa (sólida) e qual é a próxima meia-viagem (pontilhada)
+  ({int? siAtivo, int? siProximo}) _obterShapesMeiaViagem(LinhaOnibus l) {
+    final d = l.dep[_diaSel] ?? {};
+    final pares = d[_sentidoSel] ?? [];
+    if (pares.isEmpty) return (siAtivo: null, siProximo: null);
+
+    int siAtivo;
+    if (_viagemSelIdx != null && _viagemSelIdx! < pares.length) {
+      siAtivo = pares[_viagemSelIdx!][1];
+    } else {
+      // Escolhe a meia-viagem que está acontecendo agora/próxima, ou a mais frequente do sentido
+      final ag = MotorHorarios.agoraMin();
+      final proxPar = pares.where((p) => p[0] >= ag).firstOrNull;
+      if (proxPar != null) {
+        siAtivo = proxPar[1];
+      } else {
+        final cont = <int, int>{};
+        for (final p in pares) {
+          cont[p[1]] = (cont[p[1]] ?? 0) + 1;
+        }
+        siAtivo = cont.entries
+            .reduce((a, b) => a.value >= b.value ? a : b)
+            .key;
+      }
+    }
+
+    // Próxima meia-viagem (sentido complementar B <-> T)
+    final outroSentido = _sentidoSel == 'T' ? 'B' : 'T';
+    final paresOutro = d[outroSentido] ?? [];
+    int? siProximo;
+    if (paresOutro.isNotEmpty) {
+      final ag = MotorHorarios.agoraMin();
+      final proxOutro = paresOutro.where((p) => p[0] >= ag).firstOrNull;
+      siProximo = proxOutro != null ? proxOutro[1] : paresOutro.first[1];
+    }
+
+    return (siAtivo: siAtivo, siProximo: siProximo);
+  }
+
   void _aoClicarNoOnibus(VeiculoTempoReal v) {
     final l = _porId(v.linhaId);
     if (l == null) return;
@@ -409,33 +452,18 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     final pares = d[sentidoFinal] ?? [];
-    if (idxViagem >= 0 && idxViagem < pares.length) {
-      final si = pares[idxViagem][1];
-      final pts = l.shapes[si].p;
-      if (pts.length >= 2) {
-        _mapController.fitCamera(
-          CameraFit.bounds(
-            bounds:
-                LatLngBounds.fromPoints([...pts, LatLng(v.lat, v.lon)]),
-            padding: const EdgeInsets.all(48),
-            maxZoom: 16.0,
-          ),
-        );
-      }
-    } else {
-      final pts = <LatLng>[];
-      for (final sh in l.shapes.where((x) => x.main == 1)) {
-        pts.addAll(sh.p);
-      }
-      if (pts.length >= 2) {
-        _mapController.fitCamera(
-          CameraFit.bounds(
-            bounds: LatLngBounds.fromPoints(pts),
-            padding: const EdgeInsets.all(48),
-            maxZoom: 16.0,
-          ),
-        );
-      }
+    final si = (idxViagem >= 0 && idxViagem < pares.length)
+        ? pares[idxViagem][1]
+        : _obterShapesMeiaViagem(l).siAtivo;
+    if (si != null && l.shapes[si].p.length >= 2) {
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(
+              [...l.shapes[si].p, LatLng(v.lat, v.lon)]),
+          padding: const EdgeInsets.all(48),
+          maxZoom: 16.0,
+        ),
+      );
     }
   }
 
@@ -497,9 +525,11 @@ class _HomeScreenState extends State<HomeScreen> {
         } else if (sDisp.isNotEmpty && !sDisp.contains(_sentidoSel)) {
           _sentidoSel = sDisp.first;
         }
+
+        final meias = _obterShapesMeiaViagem(l);
         final pts = <LatLng>[];
-        for (final s in l.shapes.where((x) => x.main == 1)) {
-          pts.addAll(s.p);
+        if (meias.siAtivo != null) {
+          pts.addAll(l.shapes[meias.siAtivo!].p);
         }
         if (pts.length >= 2 && _trechoSel == null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -507,7 +537,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _mapController.fitCamera(
               CameraFit.bounds(
                 bounds: LatLngBounds.fromPoints(pts),
-                padding: const EdgeInsets.all(40),
+                padding: const EdgeInsets.all(44),
                 maxZoom: 16.0,
               ),
             );
@@ -592,20 +622,16 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_escolhendoNoMapa) return;
     final lSel = _porId(_linhaSelId);
     if (lSel != null) {
-      double menorD = 1e9;
-      LatLng? ptMaisPerto;
-      for (final s in lSel.shapes) {
-        final r = MotorHorarios.aoLongo(s, ll.latitude, ll.longitude);
-        if (r.d < menorD) {
-          menorD = r.d;
-          ptMaisPerto = LatLng(r.lat, r.lon);
+      final meias = _obterShapesMeiaViagem(lSel);
+      if (meias.siAtivo != null) {
+        final r = MotorHorarios.aoLongo(
+            lSel.shapes[meias.siAtivo!], ll.latitude, ll.longitude);
+        if (r.d <= 80) {
+          setState(() {
+            _trechoSel = LatLng(r.lat, r.lon);
+            _viagemSelIdx = null;
+          });
         }
-      }
-      if (menorD <= 80 && ptMaisPerto != null) {
-        setState(() {
-          _trechoSel = ptMaisPerto;
-          _viagemSelIdx = null;
-        });
       }
       return;
     }
@@ -662,11 +688,32 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _abrirConfiguracoes() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ConfiguracoesScreen(
+          onChanged: () {
+            if (!mounted) return;
+            setState(() {
+              MotorHorarios.inicializarDadosMapa(_d,
+                  modoDaltonismo: appSettings.modoDaltonismo);
+            });
+          },
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final lSel = _porId(_linhaSelId);
-    final uiScale = appScaleNotifier.value;
+    final uiScale = appSettings.uiScale;
+    final hTela = MediaQuery.of(context).size.height;
+
+    // Calcula a altura exata logo acima da folha inferior (estilo Google Maps)
+    final bottomBotaoLoc =
+        ((hTela * _sheetFraction) + 12.0).clamp(90.0, hTela - 110.0);
 
     return Scaffold(
       body: Stack(
@@ -689,7 +736,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             children: [
               TileLayer(
-                urlTemplate: _satelite
+                urlTemplate: appSettings.satelite
                     ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
                     : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'br.gov.pr.foz.foztrans.mobifoz',
@@ -703,7 +750,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
-          // Alfinete central em formato de gota vermelha ao escolher Partida/Destino no mapa
+          // Alfinete central em formato de gota vermelha ao escolher Partida/Destino
           if (_escolhendoNoMapa)
             const IgnorePointer(
               child: Center(
@@ -784,182 +831,134 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          // Controle de Tamanho de Botões e Textos (Acessibilidade A- / A+)
+          // Botão "Painel TTU" discreto no topo direito
           if (!_escolhendoNoMapa)
             Positioned(
               top: MediaQuery.of(context).padding.top + 10,
-              left: 10,
-              child: Material(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                elevation: 3,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    InkWell(
-                      borderRadius: const BorderRadius.horizontal(
-                          left: Radius.circular(8)),
-                      onTap: () => alterarEscalaApp(uiScale - 0.1),
-                      child: const Padding(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        child: Text(
-                          'A-',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                            color: Color(0xFF14212B),
-                          ),
-                        ),
-                      ),
+              right: 12,
+              child: _BotaoMapa(
+                icone: Icons.tv,
+                rotulo: _t('painel_ttu'),
+                destaque: true,
+                scale: uiScale,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PainelTtuScreen(dados: _d),
                     ),
-                    Container(width: 1, height: 20, color: Colors.black12),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: Text(
-                        '${(uiScale * 100).round()}%',
-                        style: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF566777),
-                        ),
-                      ),
-                    ),
-                    Container(width: 1, height: 20, color: Colors.black12),
-                    InkWell(
-                      borderRadius: const BorderRadius.horizontal(
-                          right: Radius.circular(8)),
-                      onTap: () => alterarEscalaApp(uiScale + 0.1),
-                      child: const Padding(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        child: Text(
-                          'A+',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 14.5,
-                            color: Color(0xFF12325B),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  );
+                },
               ),
             ),
 
-          // Botões flutuantes no canto superior direito
+          // Botão "Onde estou" (Quadrado arredondado estilo Google Maps que sobe/desce junto com a aba!)
           if (!_escolhendoNoMapa)
             Positioned(
-              top: MediaQuery.of(context).padding.top + 10,
-              right: 10,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _BotaoMapa(
-                    icone: Icons.my_location,
-                    rotulo: _t('loc'),
-                    scale: uiScale,
-                    onTap: () => _obterMinhaLocalizacao(abrirPertoDeMim: true),
+              bottom: bottomBotaoLoc,
+              right: 14,
+              child: Material(
+                color: isDark ? AppConfig.panelDark : Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                elevation: 5,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => _obterMinhaLocalizacao(abrirPertoDeMim: true),
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Icon(
+                      Icons.my_location,
+                      color: _minhaLoc != null
+                          ? _corGpsAzul
+                          : (isDark ? Colors.white : const Color(0xFF14212B)),
+                      size: 24,
+                    ),
                   ),
-                  const SizedBox(height: 6),
-                  _BotaoMapa(
-                    icone: _satelite ? Icons.map : Icons.satellite_alt,
-                    rotulo: _satelite ? _t('map_sat') : _t('map_ruas'),
-                    scale: uiScale,
-                    onTap: () => setState(() => _satelite = !_satelite),
-                  ),
-                  const SizedBox(height: 6),
-                  _BotaoMapa(
-                    icone: Icons.tv,
-                    rotulo: _t('painel_ttu'),
-                    destaque: true,
-                    scale: uiScale,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => PainelTtuScreen(dados: _d),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+                ),
               ),
             ),
 
           // 2. FOLHA INFERIOR RETRÁTIL
           if (!_escolhendoNoMapa)
-            DraggableScrollableSheet(
-              controller: _sheetController,
-              initialChildSize: 0.52,
-              minChildSize: 0.15,
-              maxChildSize: 0.90,
-              snap: true,
-              snapSizes: const [0.15, 0.52, 0.90],
-              builder: (context, scrollController) {
-                return Material(
-                  color: isDark ? AppConfig.bgDark : AppConfig.bgLight,
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(18)),
-                  elevation: 12,
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onVerticalDragUpdate: _arrastarPainel,
-                        onTap: _alternarAlturaPainel,
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 11),
-                          color: (lSel == null && _destino == null)
-                              ? (isDark
-                                  ? AppConfig.brandDark
-                                  : AppConfig.brandLight)
-                              : (isDark
-                                  ? AppConfig.panelDark
-                                  : AppConfig.bgLight),
-                          child: Center(
-                            child: Container(
-                              width: 48,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: (lSel == null && _destino == null)
-                                    ? Colors.white70
-                                    : Colors.grey.withOpacity(0.6),
-                                borderRadius: BorderRadius.circular(3),
+            NotificationListener<DraggableScrollableNotification>(
+              onNotification: (notif) {
+                if ((notif.extent - _sheetFraction).abs() > 0.005) {
+                  setState(() => _sheetFraction = notif.extent);
+                }
+                return false;
+              },
+              child: DraggableScrollableSheet(
+                controller: _sheetController,
+                initialChildSize: 0.52,
+                minChildSize: 0.15,
+                maxChildSize: 0.90,
+                snap: true,
+                snapSizes: const [0.15, 0.52, 0.90],
+                builder: (context, scrollController) {
+                  return Material(
+                    color: isDark ? AppConfig.bgDark : AppConfig.bgLight,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(18)),
+                    elevation: 12,
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      children: [
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onVerticalDragUpdate: _arrastarPainel,
+                          onTap: _alternarAlturaPainel,
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                            color: (lSel == null && _destino == null)
+                                ? (isDark
+                                    ? AppConfig.brandDark
+                                    : AppConfig.brandLight)
+                                : (isDark
+                                    ? AppConfig.panelDark
+                                    : AppConfig.bgLight),
+                            child: Center(
+                              child: Container(
+                                width: 48,
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  color: (lSel == null && _destino == null)
+                                      ? Colors.white70
+                                      : Colors.grey.withOpacity(0.6),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onVerticalDragUpdate: _arrastarPainel,
-                        child: (lSel == null && _destino == null)
-                            ? _construirCabecalhoBusca(isDark)
-                            : (lSel != null)
-                                ? _construirBarraLinha(lSel, isDark)
-                                : _construirBarraDestino(isDark),
-                      ),
-                      Expanded(
-                        child: ListView(
-                          controller: scrollController,
-                          padding: EdgeInsets.zero,
-                          children: [
-                            if (lSel != null)
-                              _construirDetalheLinha(lSel, isDark, uiScale)
-                            else if (_destino != null)
-                              _construirPainelDestino(isDark)
-                            else
-                              _construirListaInicial(isDark, uiScale),
-                          ],
+                        GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onVerticalDragUpdate: _arrastarPainel,
+                          child: (lSel == null && _destino == null)
+                              ? _construirCabecalhoBusca(isDark)
+                              : (lSel != null)
+                                  ? _construirBarraLinha(lSel, isDark)
+                                  : _construirBarraDestino(isDark),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+                        Expanded(
+                          child: ListView(
+                            controller: scrollController,
+                            padding: EdgeInsets.zero,
+                            children: [
+                              if (lSel != null)
+                                _construirDetalheLinha(lSel, isDark, uiScale)
+                              else if (_destino != null)
+                                _construirPainelDestino(isDark)
+                              else
+                                _construirListaInicial(isDark, uiScale),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
             ),
         ],
       ),
@@ -970,6 +969,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Polyline> _construirPolilinhas(LinhaOnibus? lSel, bool isDark) {
     final polylines = <Polyline>[];
 
+    // Opção do planejador selecionada
     if (lSel == null &&
         _destino != null &&
         _plano != null &&
@@ -1021,44 +1021,50 @@ class _HomeScreenState extends State<HomeScreen> {
       return polylines;
     }
 
+    // Linha selecionada:
+    // - Meia-viagem atual (siAtivo) = SEMPRE SÓLIDA (por cima)
+    // - Próxima meia-viagem (siProximo) = PONTILHADA (por baixo)
     if (lSel != null) {
-      final pares = (lSel.dep[_diaSel] ?? {})[_sentidoSel] ?? [];
-      if (_viagemSelIdx != null && _viagemSelIdx! < pares.length) {
-        final si = pares[_viagemSelIdx!][1];
-        final pts = lSel.shapes[si].p;
-        if (pts.length >= 2) {
-          polylines.add(
-              Polyline(points: pts, color: Colors.white, strokeWidth: 11.0));
-          polylines
-              .add(Polyline(points: pts, color: lSel.cor, strokeWidth: 7.0));
+      final meias = _obterShapesMeiaViagem(lSel);
+
+      if (meias.siProximo != null && meias.siProximo != meias.siAtivo) {
+        final ptsProx = lSel.shapes[meias.siProximo!].p;
+        if (ptsProx.length >= 2) {
+          polylines.add(Polyline(
+            points: ptsProx,
+            color: Colors.white.withOpacity(0.8),
+            strokeWidth: 6.0,
+          ));
+          polylines.add(Polyline(
+            points: ptsProx,
+            color: lSel.cor.withOpacity(0.75),
+            strokeWidth: 3.5,
+            pattern: StrokePattern.dashed(segments: const [10, 8]),
+          ));
         }
-        return polylines;
       }
 
-      final shapesSentido = pares.map((x) => x[1]).toSet();
-      for (int i = 0; i < lSel.shapes.length; i++) {
-        if (!shapesSentido.contains(i)) continue;
-        final s = lSel.shapes[i];
-        if (s.p.length < 2) continue;
-        final isMain = s.main == 1;
-        polylines.add(Polyline(
-          points: s.p,
-          color: Colors.white,
-          strokeWidth: isMain ? 9.0 : 5.5,
-        ));
-        polylines.add(Polyline(
-          points: s.p,
-          color: lSel.cor,
-          strokeWidth: isMain ? 5.5 : 3.5,
-          pattern: isMain
-              ? const StrokePattern.solid()
-              : StrokePattern.dashed(segments: const [10, 7]),
-        ));
+      if (meias.siAtivo != null) {
+        final ptsAtivo = lSel.shapes[meias.siAtivo!].p;
+        if (ptsAtivo.length >= 2) {
+          polylines.add(Polyline(
+            points: ptsAtivo,
+            color: Colors.white,
+            strokeWidth: 10.5,
+            pattern: const StrokePattern.solid(),
+          ));
+          polylines.add(Polyline(
+            points: ptsAtivo,
+            color: lSel.cor,
+            strokeWidth: 6.5,
+            pattern: const StrokePattern.solid(),
+          ));
+        }
       }
       return polylines;
     }
 
-    // Visão geral: filtra as linhas no mapa pela aba selecionada (Todas, 10–70, 101–120, 200–250, 310–380)
+    // Visão geral: filtra pelas abas de família (Todas, 10–70, 101–120, 200–250, 310–380)
     for (final l in _linhasPublicas) {
       if (_abaFamilia != 'all' &&
           MotorHorarios.familiaLinha(l) != _abaFamilia) {
@@ -1081,33 +1087,52 @@ class _HomeScreenState extends State<HomeScreen> {
     return polylines;
   }
 
+  /// Exibe apenas os pontos de parada por onde a meia-viagem SÓLIDA atual realmente passa!
   List<Marker> _construirMarkersParadas(LinhaOnibus? lSel) {
     final markers = <Marker>[];
-    final stopsFiltrados = lSel != null
-        ? _d.stops.where((s) => s.linhasAtivas
-            .any((o) => o.id == lSel.id && (o.s.isEmpty || o.s == _sentidoSel)))
-        : _d.stops.where((s) {
-            if (s.linhasAtivas.isEmpty) return false;
-            if (_abaFamilia == 'all') return true;
-            return s.linhasAtivas.any((o) {
-              final l = _porId(o.id);
-              return l != null &&
-                  MotorHorarios.familiaLinha(l) == _abaFamilia;
-            });
-          });
+    final icScale = appSettings.mapIconScale;
+    final tam = 22.0 * icScale;
+
+    Iterable<PontoParada> stopsFiltrados;
+    if (lSel != null) {
+      final meias = _obterShapesMeiaViagem(lSel);
+      final shAtivo =
+          meias.siAtivo != null ? lSel.shapes[meias.siAtivo!] : null;
+
+      stopsFiltrados = _d.stops.where((s) {
+        final atendeLinha = s.linhasAtivas.any(
+            (o) => o.id == lSel.id && (o.s.isEmpty || o.s == _sentidoSel));
+        if (!atendeLinha) return false;
+        if (shAtivo == null) return true;
+        // Garante que o ponto fica fisicamente sobre a meia-viagem atual (máx 55m, ou 150m no TTU)
+        final distTtu = MotorHorarios.dist(
+            s.lat, s.lon, AppConfig.ttuCoords[0], AppConfig.ttuCoords[1]);
+        final lim = distTtu <= 200.0 ? 150.0 : 55.0;
+        return MotorHorarios.aoLongo(shAtivo, s.lat, s.lon).d <= lim;
+      });
+    } else {
+      stopsFiltrados = _d.stops.where((s) {
+        if (s.linhasAtivas.isEmpty) return false;
+        if (_abaFamilia == 'all') return true;
+        return s.linhasAtivas.any((o) {
+          final l = _porId(o.id);
+          return l != null && MotorHorarios.familiaLinha(l) == _abaFamilia;
+        });
+      });
+    }
 
     for (final s in stopsFiltrados) {
       markers.add(
         Marker(
           point: LatLng(s.lat, s.lon),
-          width: 22,
-          height: 22,
+          width: tam,
+          height: tam,
           child: GestureDetector(
             onTap: () => _abrirModalParada(s),
             child: Container(
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(5),
+                borderRadius: BorderRadius.circular(5 * icScale),
                 border: Border.all(
                   color: lSel != null ? lSel.cor : AppConfig.brandLight,
                   width: 2,
@@ -1115,7 +1140,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               child: Icon(
                 Icons.directions_bus,
-                size: 13,
+                size: 13 * icScale,
                 color: lSel != null ? lSel.cor : AppConfig.brandLight,
               ),
             ),
@@ -1127,14 +1152,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<Marker> _construirMarkersPois() {
+    final icScale = appSettings.mapIconScale;
+    final tam = 30.0 * icScale;
     return _d.poi.map((p) {
       return Marker(
         point: LatLng(p.lat, p.lon),
-        width: 30,
-        height: 30,
+        width: tam,
+        height: tam,
         child: GestureDetector(
           onTap: () => _definirDestino(
-            nome: p.nomePorIdioma(_lang),
+            nome: p.nomePorIdioma(appSettings.lang),
             lat: p.lat,
             lon: p.lon,
           ),
@@ -1150,10 +1177,10 @@ class _HomeScreenState extends State<HomeScreen> {
             alignment: Alignment.center,
             child: Text(
               p.ic,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w800,
-                fontSize: 13,
+                fontSize: 13 * icScale,
               ),
             ),
           ),
@@ -1164,8 +1191,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<Marker> _construirMarkersEspeciais(LinhaOnibus? lSel) {
     final m = <Marker>[];
+    final icScale = appSettings.mapIconScale;
+    final mostrarNum = appSettings.mostrarNumeroNoOnibus;
 
-    // 1. Minha localização GPS: Ponto de Radar Azul (diferente do pino de destino)
+    // 1. Minha localização GPS (Radar Azul)
     if (_minhaLoc != null) {
       m.add(
         Marker(
@@ -1193,7 +1222,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 2. Trecho selecionado no mapa: Gota Vermelha
+    // 2. Trecho selecionado (Gota Vermelha)
     if (_trechoSel != null) {
       m.add(
         Marker(
@@ -1210,7 +1239,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 3. Partida escolhida manualmente: Marcador "A"
+    // 3. Partida manual ("A")
     if (_origemManual != null) {
       m.add(
         Marker(
@@ -1234,7 +1263,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 4. Destino pesquisado ou escolhido no mapa: Gota Vermelha grande
+    // 4. Destino (Gota Vermelha)
     if (_destino != null && !_destino!.eu) {
       m.add(
         Marker(
@@ -1251,12 +1280,11 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 5. Marcadores de Saída e Chegada quando uma viagem específica está selecionada
-    if (lSel != null && _viagemSelIdx != null) {
-      final pares = (lSel.dep[_diaSel] ?? {})[_sentidoSel] ?? [];
-      if (_viagemSelIdx! < pares.length) {
-        final si = pares[_viagemSelIdx!][1];
-        final pts = lSel.shapes[si].p;
+    // 5. Pontos de Início e Fim da meia-viagem ativa
+    if (lSel != null) {
+      final meias = _obterShapesMeiaViagem(lSel);
+      if (meias.siAtivo != null) {
+        final pts = lSel.shapes[meias.siAtivo!].p;
         if (pts.length >= 2) {
           m.add(
             Marker(
@@ -1290,7 +1318,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // 6. Ônibus em tempo real: Clicar nele abre a linha e a viagem atual daquele carro!
+    // 6. Ônibus em tempo real (Ícone 🚌 OU Número da Linha (101) com tamanho configurável!)
     for (final v in _veiculosRt) {
       if (v.idadeSegundos > 300) continue;
       final l = _porId(v.linhaId);
@@ -1302,25 +1330,41 @@ class _HomeScreenState extends State<HomeScreen> {
         continue;
       }
 
+      final wBus = (mostrarNum ? 46.0 : 36.0) * icScale;
+      final hBus = 36.0 * icScale;
+
       m.add(
         Marker(
           key: ValueKey('bus_${v.prefixo}_${v.lat}_${v.lon}'),
           point: LatLng(v.lat, v.lon),
-          width: 36,
-          height: 36,
+          width: wBus,
+          height: hBus,
           child: GestureDetector(
             onTap: () => _aoClicarNoOnibus(v),
             child: Container(
               decoration: BoxDecoration(
-                color: l.cor,
-                shape: BoxShape.circle,
+                color: mostrarNum ? l.bgc : l.cor,
+                borderRadius: BorderRadius.circular(999),
                 border: Border.all(color: Colors.white, width: 2.5),
                 boxShadow: const [
                   BoxShadow(color: Colors.black45, blurRadius: 5)
                 ],
               ),
-              child: const Icon(Icons.directions_bus,
-                  color: Colors.white, size: 19),
+              alignment: Alignment.center,
+              child: mostrarNum
+                  ? Text(
+                      l.id,
+                      style: TextStyle(
+                        color: l.ink,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13.0 * icScale,
+                      ),
+                    )
+                  : Icon(
+                      Icons.directions_bus,
+                      color: Colors.white,
+                      size: 19.0 * icScale,
+                    ),
             ),
           ),
         ),
@@ -1443,10 +1487,9 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Row(
             children: [
-              // Logo Foztrans.png direto de assets/Foztrans.png com cantos arredondados
               Container(
-                height: 60,
-                constraints: const BoxConstraints(maxWidth: 120),
+                height: 38,
+                constraints: const BoxConstraints(maxWidth: 104),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
@@ -1461,7 +1504,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       fit: BoxFit.contain,
                       errorBuilder: (_, __, ___) => const Center(
                         child: Text(
-                          'FOZTRANS',
+                          'FOZBUS',
                           style: TextStyle(
                             color: AppConfig.brandLight,
                             fontWeight: FontWeight.w900,
@@ -1484,33 +1527,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
-              Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.white38),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  children: [
-                    for (final l in ['pt', 'es', 'en'])
-                      GestureDetector(
-                        onTap: () => setState(() => _lang = l),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 9, vertical: 6),
-                          color: _lang == l ? Colors.white : Colors.transparent,
-                          child: Text(
-                            l.toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: _lang == l
-                                  ? AppConfig.brandLight
-                                  : Colors.white70,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+              // Ícone de Engrenagem para abrir a Tela de Configurações
+              Material(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: _abrirConfiguracoes,
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.settings,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1557,7 +1588,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              // Botão de escolher destino no mapa em VERMELHO de destaque
               SizedBox(
                 height: 46,
                 width: 46,
@@ -1842,10 +1872,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: pois.map((p) {
                   return _ItemLocalPin(
                     icone: p.ic,
-                    titulo: p.nomePorIdioma(_lang),
+                    titulo: p.nomePorIdioma(appSettings.lang),
                     isDark: isDark,
                     onTap: () => _definirDestino(
-                      nome: p.nomePorIdioma(_lang),
+                      nome: p.nomePorIdioma(appSettings.lang),
                       lat: p.lat,
                       lon: p.lon,
                     ),
@@ -1892,6 +1922,10 @@ class _HomeScreenState extends State<HomeScreen> {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _abrirConfiguracoes,
           ),
         ],
       ),
@@ -1941,7 +1975,6 @@ class _HomeScreenState extends State<HomeScreen> {
       return _t('fromB');
     }
 
-    // Informações da viagem selecionada (quando clicou num horário ou num ônibus no mapa)
     String? tituloViagemSel;
     String? rotaViagemSel;
     if (_viagemSelIdx != null && _viagemSelIdx! < pares.length) {
@@ -1958,7 +1991,6 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Cartão da Viagem Selecionada (ao clicar no ônibus ou num horário)
           if (tituloViagemSel != null)
             Container(
               margin: const EdgeInsets.only(bottom: 10),
@@ -2280,7 +2312,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── Painel de Destino e Planejador de Viagens (A -> B) ──
   Widget _construirBarraDestino(bool isDark) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -2315,6 +2346,10 @@ class _HomeScreenState extends State<HomeScreen> {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _abrirConfiguracoes,
           ),
         ],
       ),

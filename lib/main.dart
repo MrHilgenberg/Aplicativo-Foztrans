@@ -1,32 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'config/app_config.dart';
+import 'config/app_settings.dart';
 import 'models/transporte_models.dart';
 import 'screens/home_screen.dart';
 import 'services/api_service.dart';
 
-
-/// Controlador global de escala para acessibilidade (0.9x a 1.4x)
-final ValueNotifier<double> appScaleNotifier = ValueNotifier<double>(1.0);
-
-Future<void> alterarEscalaApp(double novaEscala) async {
-  final valor = novaEscala.clamp(0.9, 1.4);
-  appScaleNotifier.value = valor;
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('app_ui_scale', valor);
-  } catch (_) {}
-}
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final salvo = prefs.getDouble('app_ui_scale');
-    if (salvo != null) {
-      appScaleNotifier.value = salvo.clamp(0.9, 1.4);
-    }
-  } catch (_) {}
+  await appSettings.carregar();
   runApp(const MobiFozApp());
 }
 
@@ -35,9 +16,9 @@ class MobiFozApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<double>(
-      valueListenable: appScaleNotifier,
-      builder: (context, scale, _) {
+    return ListenableBuilder(
+      listenable: appSettings,
+      builder: (context, _) {
         return MaterialApp(
           title: 'FozBus · FOZTRANS',
           debugShowCheckedModeBanner: false,
@@ -67,7 +48,8 @@ class MobiFozApp extends StatelessWidget {
           builder: (context, child) {
             final mq = MediaQuery.of(context);
             return MediaQuery(
-              data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+              data: mq.copyWith(
+                  textScaler: TextScaler.linear(appSettings.uiScale)),
               child: child!,
             );
           },
@@ -129,7 +111,6 @@ class _InicializadorScreenState extends State<_InicializadorScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Logo Foztrans.png direto de assets/Foztrans.png com cantos arredondados
               Container(
                 constraints: const BoxConstraints(maxWidth: 260),
                 decoration: BoxDecoration(
@@ -146,13 +127,13 @@ class _InicializadorScreenState extends State<_InicializadorScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(20),
                   child: Image.asset(
-                    'assets/fozbus_icone.png',
+                    'assets/fozbus_logo.png',
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) => const Padding(
                       padding:
                           EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                       child: Text(
-                        'FOZTRANS',
+                        'FOZBUS',
                         style: TextStyle(
                           color: AppConfig.brandLight,
                           fontWeight: FontWeight.w900,

@@ -1,18 +1,108 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+enum ModoDaltonismo {
+  nenhum,
+  protanopia, // Dificuldade com vermelho
+  deuteranopia, // Dificuldade com verde
+  tritanopia, // Dificuldade com azul/amarelo
+}
+
+class AppSettings {
+  final double uiScale;
+  final double mapIconScale;
+  final bool mostrarNumeroNoOnibus;
+  final bool satelite;
+  final String idioma;
+  final ThemeMode themeMode;
+  final ModoDaltonismo daltonismo;
+
+  const AppSettings({
+    this.uiScale = 1.0,
+    this.mapIconScale = 1.0,
+    this.mostrarNumeroNoOnibus = false,
+    this.satelite = false,
+    this.idioma = 'pt',
+    this.themeMode = ThemeMode.system,
+    this.daltonismo = ModoDaltonismo.nenhum,
+  });
+
+  AppSettings copyWith({
+    double? uiScale,
+    double? mapIconScale,
+    bool? mostrarNumeroNoOnibus,
+    bool? satelite,
+    String? idioma,
+    ThemeMode? themeMode,
+    ModoDaltonismo? daltonismo,
+  }) {
+    return AppSettings(
+      uiScale: uiScale ?? this.uiScale,
+      mapIconScale: mapIconScale ?? this.mapIconScale,
+      mostrarNumeroNoOnibus:
+          mostrarNumeroNoOnibus ?? this.mostrarNumeroNoOnibus,
+      satelite: satelite ?? this.satelite,
+      idioma: idioma ?? this.idioma,
+      themeMode: themeMode ?? this.themeMode,
+      daltonismo: daltonismo ?? this.daltonismo,
+    );
+  }
+}
+
+final ValueNotifier<AppSettings> appSettingsNotifier =
+    ValueNotifier<AppSettings>(const AppSettings());
+
+Future<void> carregarConfiguracoesSalvas() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final uiScale = (prefs.getDouble('cfg_ui_scale') ?? 1.0).clamp(0.85, 1.40);
+    final mapIconScale =
+        (prefs.getDouble('cfg_map_icon_scale') ?? 1.0).clamp(0.75, 1.50);
+    final mostrarNum = prefs.getBool('cfg_bus_num') ?? false;
+    final sat = prefs.getBool('cfg_satelite') ?? false;
+    final lang = prefs.getString('cfg_idioma') ?? 'pt';
+    final temaIdx = prefs.getInt('cfg_tema') ?? 0;
+    final daltIdx = prefs.getInt('cfg_daltonismo') ?? 0;
+
+    appSettingsNotifier.value = AppSettings(
+      uiScale: uiScale,
+      mapIconScale: mapIconScale,
+      mostrarNumeroNoOnibus: mostrarNum,
+      satelite: sat,
+      idioma: ['pt', 'es', 'en'].contains(lang) ? lang : 'pt',
+      themeMode:
+          ThemeMode.values[temaIdx.clamp(0, ThemeMode.values.length - 1)],
+      daltonismo: ModoDaltonismo
+          .values[daltIdx.clamp(0, ModoDaltonismo.values.length - 1)],
+    );
+  } catch (_) {}
+}
+
+Future<void> atualizarConfiguracoes(AppSettings novas) async {
+  appSettingsNotifier.value = novas;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('cfg_ui_scale', novas.uiScale);
+    await prefs.setDouble('cfg_map_icon_scale', novas.mapIconScale);
+    await prefs.setBool('cfg_bus_num', novas.mostrarNumeroNoOnibus);
+    await prefs.setBool('cfg_satelite', novas.satelite);
+    await prefs.setString('cfg_idioma', novas.idioma);
+    await prefs.setInt('cfg_tema', novas.themeMode.index);
+    await prefs.setInt('cfg_daltonismo', novas.daltonismo.index);
+  } catch (_) {}
+}
 
 class AppConfig {
-  // Endpoints originais de Dados (Apps Script) e Tempo Real (Cloudflare Worker)
   static const String dadosUrl =
       'https://script.google.com/macros/s/AKfycbwaKZCwAvcOlfRuXW_0pEDw4sSIrfqhazUirjPGo1RxGXNFVXj2-bBmAr2S9ACI2Di1/exec';
   static const String rtUrl =
       'https://onibus-foz.alexandre-foztrans.workers.dev/';
 
-  // Coordenadas do TTU e constantes de cálculo
   static const List<double> ttuCoords = [-25.5326, -54.5875];
   static const double raioTermPadrao = 130.0;
   static const double velKmh = 18.0;
 
-  // Cores da Marca FOZTRANS (Tema Claro e Escuro)
+  // Cores da Marca FOZTRANS
   static const Color brandLight = Color(0xFF12325B);
   static const Color brandDark = Color(0xFF0C2340);
   static const Color accentLight = Color(0xFFF07800);
@@ -30,7 +120,7 @@ class AppConfig {
   static const Color chipLight = Color(0xFFEEF4FA);
   static const Color chipDark = Color(0xFF1F2B35);
 
-  // Cores base das famílias de linhas (f0, f1, f2, f3, fe)
+  // Paleta padrão das famílias de linhas (10-70, 101-120, 200-250, 310-380)
   static const Map<String, String> familiaCoresHex = {
     'f0': '#d8402f',
     'f1': '#1c62b9',
@@ -39,23 +129,42 @@ class AppConfig {
     'fe': '#b07a12',
   };
 
-  // Locais de referência pré-definidos
-  static const Map<String, List<dynamic>> locais = {
-    'ttu': ['Terminal de Transporte Urbano (TTU)', -25.5326, -54.5875],
-    'aeroporto': ['Aeroporto Internacional (IGU)', -25.5963, -54.4872],
-    'cataratas': ['Cataratas do Iguaçu (Parque Nacional)', -25.6143, -54.4813],
-    'aves': ['Parque das Aves', -25.615, -54.4847],
-    'itaipu': ['Itaipu Binacional (Centro de Visitantes)', -25.4475, -54.5857],
-    'marco': ['Marco das Três Fronteiras', -25.592, -54.5916],
-    'rodoviaria': ['Rodoviária Internacional', -25.5203, -54.5631],
-  };
+  // Paletas adaptadas para Daltonismo (Alto Contraste Okabe-Ito / Tol)
+  static Map<String, String> coresPorModoDaltonismo(ModoDaltonismo modo) {
+    switch (modo) {
+      case ModoDaltonismo.protanopia:
+        return const {
+          'f0': '#D55E00', // Âmbar forte (substitui vermelho escuro)
+          'f1': '#0072B2', // Azul Royal
+          'f2': '#009E73', // Turquesa / Ciano-verde
+          'f3': '#CC79A7', // Magenta / Violeta claro
+          'fe': '#E69F00', // Ouro
+        };
+      case ModoDaltonismo.deuteranopia:
+        return const {
+          'f0': '#E66100', // Laranja queimado vivo
+          'f1': '#005AB5', // Azul cobalto
+          'f2': '#40B0A6', // Verde-água / Teal
+          'f3': '#5D3A9B', // Roxo profundo
+          'fe': '#D4A017', // Mostarda
+        };
+      case ModoDaltonismo.tritanopia:
+        return const {
+          'f0': '#D92B2B', // Carmim intenso
+          'f1': '#008080', // Ciano escuro (substitui azul)
+          'f2': '#1B7837', // Verde floresta
+          'f3': '#993366', // Ameixa / Vinho
+          'fe': '#B85D00', // Bronze
+        };
+      case ModoDaltonismo.nenhum:
+        return familiaCoresHex;
+    }
+  }
 
-  // Grupos de linhas combinadas
   static const Map<String, List<String>> grupos = {
     '101': ['101', '102'],
   };
 
-  // Configuração original (CFG.linhas) com variações e alas do TTU
   static final Map<String, Map<String, dynamic>> linhasCfg = {
     "10": {
       "var": {
@@ -84,7 +193,8 @@ class AppConfig {
         "VILA C-DI>>TTU": "",
         "VILA C-5MIN-DI>>TTU": "",
         "VILA C>>TTU": "passa na Unioeste",
-        "VILA C-CMP UNI>>TTU": "entra no campus da Unioeste (sáb.: só até a entrada)"
+        "VILA C-CMP UNI>>TTU":
+            "entra no campus da Unioeste (sáb.: só até a entrada)"
       },
       "ala": "3"
     },
@@ -106,7 +216,8 @@ class AppConfig {
         "VILA A VIA JK": "",
         "SOLTURA VILA A VIA JK": "",
         "VILA A VIA JK-CER IV": "via Travessa Florai",
-        "VILA A VIA JK-CER IV-COL.A.S": "via Travessa Florai e Colégio Ayrton Senna",
+        "VILA A VIA JK-CER IV-COL.A.S":
+            "via Travessa Florai e Colégio Ayrton Senna",
         "VILA A VIA JK-JD.CURITIBANO": "via Jd. Curitibano",
         "RECOLHIMENTO ZIZO": "só até a Escola Zizo"
       },
@@ -117,7 +228,8 @@ class AppConfig {
         "UNIVERSITÁRIA": "",
         "UNIVERSITÁRIA-5MIN": "",
         "UNIVERSITÁRIA-CMP UNI": "entra no campus da Unioeste",
-        "UNIVERSITÁRIA-ITAIPU PARQUETEC": "via Itaipu Parquetec (não passa no Hospital Costa Cavalcanti)"
+        "UNIVERSITÁRIA-ITAIPU PARQUETEC":
+            "via Itaipu Parquetec (não passa no Hospital Costa Cavalcanti)"
       },
       "ala": "1"
     },
@@ -141,20 +253,25 @@ class AppConfig {
         "[S-N-PTE]PRIMEIRA V-S-N (102)": "Sul → Norte · Ponte",
         "[N-S] primeira viagem ponte N-S": "Norte → Sul · Ponte",
         "[N-S-PTE-CTRO]N-S-PONTE VIA CTO": "Norte → Sul · Ponte e Centro",
-        "[S-GL-N-PTE]PRIMEIRA V-S-GL-N (102)": "Sul → Grande Lago → Norte · Ponte",
-        "[S-GL-N-DI]PRIM-S-GL-N-DIRT (102)": "Sul → Grande Lago → Norte · direto",
+        "[S-GL-N-PTE]PRIMEIRA V-S-GL-N (102)":
+            "Sul → Grande Lago → Norte · Ponte",
+        "[S-GL-N-DI]PRIM-S-GL-N-DIRT (102)":
+            "Sul → Grande Lago → Norte · direto",
         "[S-N-DI-CENTRO]S-N-DIRETO VIA CTO": "Sul → Norte · direto, via Centro",
         "[N-S-DI-CETRO]N-S-DIRETO VIA CTO": "Norte → Sul · direto, via Centro",
         "S-CMP UNI-PTE": "Sul · Unioeste e Ponte",
-        "[S-N-CMP UNI-DI]SUL - NORTE - CMP UNI - DI": "Sul → Norte · direto, via Unioeste",
+        "[S-N-CMP UNI-DI]SUL - NORTE - CMP UNI - DI":
+            "Sul → Norte · direto, via Unioeste",
         "SUL-CMP UNI-DI": "Sul · direto, via Unioeste",
-        "VILA C NORTE-5MIN-S-GL-N-DI": "Sul → Grande Lago → Norte · direto",
+        "VILA C NORTE-5MIN-S-GL-N-DI":
+            "Sul → Grande Lago → Norte · direto",
         "VILA C NORTE-F-5MIN-S-N-DI": "Sul → Norte · direto",
         "[TTU-PTE-S-N]Mac-SUL-NORTE (102)": "McDonald’s · Sul → Norte · Ponte",
         "[DI-S]VILA C S - DIREITO - REC (102)": "Sul · direto",
         "REC - TTU - N - S": "Norte → Sul · direto",
         "[TTU-DI-N-S]MAC-N-S-DIRETO (102)": "McDonald’s · Norte → Sul · direto",
-        "[TTU-DI-CMP-UNI-S-N]MAC-DI-CMP UNI-S-N": "McDonald’s · Sul → Norte · direto, via Unioeste",
+        "[TTU-DI-CMP-UNI-S-N]MAC-DI-CMP UNI-S-N":
+            "McDonald’s · Sul → Norte · direto, via Unioeste",
         "[PTE-S]VILA C Sul-PONTE - REC (102)": "Sul · Ponte",
         "[PONTE]TTU -> PONTE": "só até a Ponte",
         "Vila C Sul -PONTE": "Sul · Ponte",
@@ -252,7 +369,8 @@ class AppConfig {
         "Santa Rita": "",
         "primeira viagem": "",
         "Direto": "direto (sem o Lagoa Dourada)",
-        "PONTE- VIA ARNALDO BUSATTO": "via Colégio Arnaldo Busatto (seg. a sex.)",
+        "PONTE- VIA ARNALDO BUSATTO":
+            "via Colégio Arnaldo Busatto (seg. a sex.)",
         "VIA PRAÇA": "via Praça Três Lagoas"
       }
     },
@@ -268,9 +386,11 @@ class AppConfig {
       "var": {
         "Centro - Três Lagoas Centro": "",
         "Centro - COL - PDO": "via Colombelli e Porto Dourado",
-        "Centro - COL - PDO - PQ DA LAGOA": "via Colombelli, Porto Dourado e Pq. da Lagoa",
+        "Centro - COL - PDO - PQ DA LAGOA":
+            "via Colombelli, Porto Dourado e Pq. da Lagoa",
         "Centro - JD. ATLANTIS - VIA INSS": "via Jd. Atlantis e INSS",
-        "Centro - Volta ABV - Sol de Maio": "via Alto da Boa Vista e Sol de Maio",
+        "Centro - Volta ABV - Sol de Maio":
+            "via Alto da Boa Vista e Sol de Maio",
         "Centro - SOL DE MAIO - ABV": "via Sol de Maio e Alto da Boa Vista",
         "Centro - ABV - TERMINAL": "via Alto da Boa Vista",
         "Centro - COL-INSS": "via Colombelli e INSS",
@@ -279,7 +399,8 @@ class AppConfig {
         "Centro - TTU - PRAÇA TRÊS LAGOAS": "até a Praça Três Lagoas",
         "Centro - Três Lagoas - DI": "direto, sem passar pelo Centro",
         "Centro - INSS-UPA-COL": "via INSS, UPA e Colombelli",
-        "Centro - JD.ATL.JD.ALV.COL-PDO": "via Jd. Atlantis, Jd. Alvorada, Colombelli e Porto Dourado"
+        "Centro - JD.ATL.JD.ALV.COL-PDO":
+            "via Jd. Atlantis, Jd. Alvorada, Colombelli e Porto Dourado"
       },
       "ala": "3"
     },
@@ -288,11 +409,14 @@ class AppConfig {
         "ATLANTIS -PRAÇA": "Res. Atlantis",
         "RES. ATLANTIS - VIA UBS": "Res. Atlantis, via UBS São João",
         "ABV - PRAÇA": "Alto da Boa Vista",
-        "ANGATUBA - PQ. DA LAGOA - PDO": "Angatuba, Pq. da Lagoa e Porto Dourado",
+        "ANGATUBA - PQ. DA LAGOA - PDO":
+            "Angatuba, Pq. da Lagoa e Porto Dourado",
         "PQ.LAG - BOICY - COL": "Pq. da Lagoa, Boicy e Colombelli",
         "ANGATUBA - CEDRO": "Angatuba e Jd. Cedro",
-        "COLO - ANG - CEDRO -PQ. LAG - PDO": "Colombelli, Angatuba, Cedro, Pq. da Lagoa e Porto Dourado",
-        "AG-CEDRO-PQ. LAG-PDO": "Angatuba, Cedro, Pq. da Lagoa e Porto Dourado"
+        "COLO - ANG - CEDRO -PQ. LAG - PDO":
+            "Colombelli, Angatuba, Cedro, Pq. da Lagoa e Porto Dourado",
+        "AG-CEDRO-PQ. LAG-PDO":
+            "Angatuba, Cedro, Pq. da Lagoa e Porto Dourado"
       }
     },
     "230": {
@@ -314,15 +438,19 @@ class AppConfig {
         "Praia - EXP INSS": "via Av. Nacional",
         "Praia - COL-PDO": "via Porto Dourado, sem INSS e UPA",
         "Praia - PQ DA LAGOA - COL.": "via Pq. da Lagoa, sem INSS e UPA",
-        "Praia - PQ DA LAGOA - COLO - OLIVEIRAS - INSS": "via Pq. da Lagoa e Jd. Oliveiras",
+        "Praia - PQ DA LAGOA - COLO - OLIVEIRAS - INSS":
+            "via Pq. da Lagoa e Jd. Oliveiras",
         "Praia - JD. ATLANTIS - VIA INSS": "via Jd. Atlantis",
-        "Praia - PDO-COL-Oliveiras-UPA-INSS": "via Porto Dourado e Jd. Oliveiras",
-        "Praia - COL-PDO-Oliveiras": "via Porto Dourado e Jd. Oliveiras, sem INSS e UPA",
+        "Praia - PDO-COL-Oliveiras-UPA-INSS":
+            "via Porto Dourado e Jd. Oliveiras",
+        "Praia - COL-PDO-Oliveiras":
+            "via Porto Dourado e Jd. Oliveiras, sem INSS e UPA",
         "Praia - PDO - COL": "via Porto Dourado, sem INSS e UPA",
         "Praia - COL - PDO - JD ATL": "via Porto Dourado e Jd. Atlantis",
         "Praia - INSS-UPA-COL-SATURNINO": "via R. Saturnino",
         "Praia - INSS-UPA-COL-ARAUCARIA": "via Araucária",
-        "Praia - INSS-UPA-COL - JD. ATLANTIS - ULTIMA VIAGEM": "via Jd. Atlantis"
+        "Praia - INSS-UPA-COL - JD. ATLANTIS - ULTIMA VIAGEM":
+            "via Jd. Atlantis"
       },
       "ala": "3"
     },
@@ -331,9 +459,11 @@ class AppConfig {
         "Três Bandeiras": "",
         "IV - CND": "via Curitibano IV e Jd. Canadá",
         "Via CTO": "desce ao Centro",
-        "CTO-INSS-P.P.-I-II-CND-IV": "via Centro, INSS, Pq. Presidente I e II, Jd. Canadá e Curitibano IV",
+        "CTO-INSS-P.P.-I-II-CND-IV":
+            "via Centro, INSS, Pq. Presidente I e II, Jd. Canadá e Curitibano IV",
         "INSS - P.P II": "via INSS e Pq. Presidente II",
-        "INSS - PP1-2 - CND.IV": "via INSS, Pq. Presidente I e II, Jd. Canadá e Curitibano IV"
+        "INSS - PP1-2 - CND.IV":
+            "via INSS, Pq. Presidente I e II, Jd. Canadá e Curitibano IV"
       },
       "ala": "3"
     },
