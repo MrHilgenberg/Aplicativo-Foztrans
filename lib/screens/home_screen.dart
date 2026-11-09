@@ -7,9 +7,12 @@ import '../config/app_config.dart';
 import '../config/app_settings.dart';
 import '../models/transporte_models.dart';
 import '../services/api_service.dart';
+import '../services/notificacao_service.dart';
+import '../services/supabase_service.dart';
 import '../utils/motor_horarios.dart';
 import 'configuracoes_screen.dart';
 import 'painel_ttu_screen.dart';
+import 'reclamacao_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final DadosTransporteGeral dadosIniciais;
@@ -21,9 +24,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final ApiService _api = ApiService();
+  final SupabaseService _supa = SupabaseService();
   final MapController _mapController = MapController();
-  final DraggableScrollableController _sheetController =
-      DraggableScrollableController();
+  final ScrollController _listScrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _origemController = TextEditingController();
 
@@ -33,7 +36,14 @@ class _HomeScreenState extends State<HomeScreen> {
   late DadosTransporteGeral _d;
   String _abaFamilia = 'all'; // 'all', 'f0', 'f1', 'f2', 'f3'
   double _zoomAtual = 12.2;
-  double _sheetFraction = 0.52; // Acompanha a altura da aba inferior para o botão Onde Estou
+
+  // Altura do painel inferior controlada APENAS pela barra superior
+  double _sheetFraction = 0.50;
+
+  // Avisos do Supabase e controle de recolhimento
+  List<AvisoFoztrans> _avisosSupa = [];
+  bool _avisosMinimizado = false;
+  final Set<int> _avisosFechadosLocal = {};
 
   // Estado de seleção
   String? _linhaSelId;
@@ -62,7 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _buscandoGeo = false;
   List<EnderecoBuscaResult> _resultadosGeo = [];
 
-  // Ônibus em tempo real (atualizados a cada 15s)
+  // Ônibus e Avisos em tempo real (atualizados a cada 15s)
   List<VeiculoTempoReal> _veiculosRt = [];
   Timer? _timerRt;
 
@@ -262,28 +272,24 @@ class _HomeScreenState extends State<HomeScreen> {
     MotorHorarios.inicializarDadosMapa(_d,
         modoDaltonismo: appSettings.modoDaltonismo);
     _diaSel = MotorHorarios.tipoDia(_d);
-    _sheetController.addListener(_aoMoverSheet);
+
+    // Pede permissão de notificação ao entrar no app
+    NotificacaoService.inicializar();
+
     _atualizarDadosEmSegundoPlano();
+
+    // A cada 15 segundos: atualiza posição dos ônibus E busca novos avisos/notificações no Supabase!
     _timerRt = Timer.periodic(const Duration(seconds: 15), (_) {
       _atualizarPosicoesRt();
+      _sincronizarAvisosEPontosSupabase();
     });
-  }
-
-  void _aoMoverSheet() {
-    if (_sheetController.isAttached) {
-      final sz = _sheetController.size;
-      if ((sz - _sheetFraction).abs() > 0.005) {
-        setState(() => _sheetFraction = sz);
-      }
-    }
   }
 
   @override
   void dispose() {
     _debounceGeo?.cancel();
     _timerRt?.cancel();
-    _sheetController.removeListener(_aoMoverSheet);
-    _sheetController.dispose();
+    _listScrollController.dispose();
     _searchController.dispose();
     _origemController.dispose();
     super.dispose();
@@ -297,7 +303,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return _linhasPublicas.where((l) => l.id == id).firstOrNull;
   }
 
-  Future<void> _atualizarDadosEmSegundoPlano() async {
+Future<void> _atualizarDadosEmSegundoPlano() async {
+    // 1. Busca os ônibus imediatamente ao abrir a tela!
+    _atualizarPosicoesRt();
+    _sincronizarAvisosEPontosSupabase();
+
+    // 2. Depois confere em segundo plano se há atualização de horários no Drive
     final novo = await _api.baixaDados();
     if (novo != null && mounted) {
       setState(() {
@@ -305,8 +316,20 @@ class _HomeScreenState extends State<HomeScreen> {
         MotorHorarios.inicializarDadosMapa(_d,
             modoDaltonismo: appSettings.modoDaltonismo);
       });
+      await _supa.aplicarPontosCustomizados(_d);
     }
-    _atualizarPosicoesRt();
+  }
+
+  /// Sincroniza avisos e pontos do Supabase a cada 15s e dispara notificação no celular se houver aviso novo
+  Future<void> _sincronizarAvisosEPontosSupabase() async {
+    await _supa.aplicarPontosCustomizados(_d);
+    final avisos = await _supa.buscarAvisosAtivos();
+    await NotificacaoService.verificarEDispararNovosAvisos(avisos);
+    if (mounted) {
+      setState(() {
+        _avisosSupa = avisos;
+      });
+    }
   }
 
   Future<void> _atualizarPosicoesRt() async {
@@ -334,31 +357,28 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Arraste exclusivo pela barra superior do painel
   void _arrastarPainel(DragUpdateDetails details) {
-    if (!_sheetController.isAttached) return;
     final hTela = MediaQuery.of(context).size.height;
     if (hTela <= 0) return;
     final delta = (details.primaryDelta ?? 0) / hTela;
-    final novoTamanho = (_sheetController.size - delta).clamp(0.15, 0.90);
-    _sheetController.jumpTo(novoTamanho);
+    setState(() {
+      _sheetFraction = (_sheetFraction - delta).clamp(0.14, 0.90);
+    });
   }
 
   void _alternarAlturaPainel() {
-    if (!_sheetController.isAttached) return;
-    final atual = _sheetController.size;
-    final double alvo = atual < 0.30
-        ? 0.52
-        : atual < 0.75
-            ? 0.90
-            : 0.52;
-    _sheetController.animateTo(
-      alvo,
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOutCubic,
-    );
+    setState(() {
+      if (_sheetFraction < 0.28) {
+        _sheetFraction = 0.50;
+      } else if (_sheetFraction < 0.75) {
+        _sheetFraction = 0.88;
+      } else {
+        _sheetFraction = 0.50;
+      }
+    });
   }
 
-  /// Determina qual shape (`si`) é a meia-viagem ativa (sólida) e qual é a próxima meia-viagem (pontilhada)
   ({int? siAtivo, int? siProximo}) _obterShapesMeiaViagem(LinhaOnibus l) {
     final d = l.dep[_diaSel] ?? {};
     final pares = d[_sentidoSel] ?? [];
@@ -368,7 +388,6 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_viagemSelIdx != null && _viagemSelIdx! < pares.length) {
       siAtivo = pares[_viagemSelIdx!][1];
     } else {
-      // Escolhe a meia-viagem que está acontecendo agora/próxima, ou a mais frequente do sentido
       final ag = MotorHorarios.agoraMin();
       final proxPar = pares.where((p) => p[0] >= ag).firstOrNull;
       if (proxPar != null) {
@@ -384,7 +403,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // Próxima meia-viagem (sentido complementar B <-> T)
     final outroSentido = _sentidoSel == 'T' ? 'B' : 'T';
     final paresOutro = d[outroSentido] ?? [];
     int? siProximo;
@@ -710,10 +728,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final lSel = _porId(_linhaSelId);
     final uiScale = appSettings.uiScale;
     final hTela = MediaQuery.of(context).size.height;
-
-    // Calcula a altura exata logo acima da folha inferior (estilo Google Maps)
+    final alturaPainel = (hTela * _sheetFraction).clamp(110.0, hTela * 0.90);
     final bottomBotaoLoc =
-        ((hTela * _sheetFraction) + 12.0).clamp(90.0, hTela - 110.0);
+        (alturaPainel + 12.0).clamp(95.0, hTela - 120.0);
 
     return Scaffold(
       body: Stack(
@@ -831,135 +848,327 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          // Botão "Painel TTU" discreto no topo direito
+          // Botão "Reclamação" no topo direito
           if (!_escolhendoNoMapa)
             Positioned(
               top: MediaQuery.of(context).padding.top + 10,
               right: 12,
-              child: _BotaoMapa(
-                icone: Icons.tv,
-                rotulo: _t('painel_ttu'),
-                destaque: true,
-                scale: uiScale,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => PainelTtuScreen(dados: _d),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-          // Botão "Onde estou" (Quadrado arredondado estilo Google Maps que sobe/desce junto com a aba!)
-          if (!_escolhendoNoMapa)
-            Positioned(
-              bottom: bottomBotaoLoc,
-              right: 14,
               child: Material(
-                color: isDark ? AppConfig.panelDark : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                elevation: 5,
+                color: _corVermelhoDestaque,
+                borderRadius: BorderRadius.circular(10),
+                elevation: 4,
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () => _obterMinhaLocalizacao(abrirPertoDeMim: true),
-                  child: SizedBox(
-                    width: 48,
-                    height: 48,
-                    child: Icon(
-                      Icons.my_location,
-                      color: _minhaLoc != null
-                          ? _corGpsAzul
-                          : (isDark ? Colors.white : const Color(0xFF14212B)),
-                      size: 24,
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            ReclamacaoScreen(linhas: _linhasPublicas),
+                      ),
+                    );
+                  },
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 12 * uiScale, vertical: 9 * uiScale),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.campaign_rounded,
+                            size: 18 * uiScale, color: Colors.white),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'Reclamação',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
             ),
 
-          // 2. FOLHA INFERIOR RETRÁTIL
+          // Botões "Onde estou" + "Painel TTU" juntos acima da aba inferior (subindo e descendo com ela)
           if (!_escolhendoNoMapa)
-            NotificationListener<DraggableScrollableNotification>(
-              onNotification: (notif) {
-                if ((notif.extent - _sheetFraction).abs() > 0.005) {
-                  setState(() => _sheetFraction = notif.extent);
-                }
-                return false;
-              },
-              child: DraggableScrollableSheet(
-                controller: _sheetController,
-                initialChildSize: 0.52,
-                minChildSize: 0.15,
-                maxChildSize: 0.90,
-                snap: true,
-                snapSizes: const [0.15, 0.52, 0.90],
-                builder: (context, scrollController) {
-                  return Material(
-                    color: isDark ? AppConfig.bgDark : AppConfig.bgLight,
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(18)),
-                    elevation: 12,
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      children: [
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onVerticalDragUpdate: _arrastarPainel,
-                          onTap: _alternarAlturaPainel,
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(vertical: 11),
-                            color: (lSel == null && _destino == null)
-                                ? (isDark
-                                    ? AppConfig.brandDark
-                                    : AppConfig.brandLight)
-                                : (isDark
-                                    ? AppConfig.panelDark
-                                    : AppConfig.bgLight),
-                            child: Center(
-                              child: Container(
-                                width: 48,
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  color: (lSel == null && _destino == null)
-                                      ? Colors.white70
-                                      : Colors.grey.withOpacity(0.6),
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
+            Positioned(
+              bottom: bottomBotaoLoc,
+              right: 14,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Material(
+                    color: isDark ? AppConfig.panelDark : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    elevation: 5,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () =>
+                          _obterMinhaLocalizacao(abrirPertoDeMim: true),
+                      child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Icon(
+                          Icons.my_location,
+                          color: _minhaLoc != null
+                              ? _corGpsAzul
+                              : (isDark
+                                  ? Colors.white
+                                  : const Color(0xFF14212B)),
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Material(
+                    color: AppConfig.brandLight,
+                    borderRadius: BorderRadius.circular(12),
+                    elevation: 5,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => PainelTtuScreen(dados: _d),
+                          ),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 10),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.tv,
+                                color: Colors.white, size: 18),
+                            const SizedBox(width: 6),
+                            Text(
+                              _t('painel_ttu'),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
                               ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // 2. PAINEL INFERIOR INDEPENDENTE:
+          // Só sobe/desce ao puxar pela barra superior. Rolar a lista lá dentro NÃO puxa o painel!
+          if (!_escolhendoNoMapa)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: alturaPainel,
+              child: Material(
+                color: isDark ? AppConfig.bgDark : AppConfig.bgLight,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(18)),
+                elevation: 14,
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    // Barra de puxar (único lugar que redimensiona a altura da aba!)
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onVerticalDragUpdate: _arrastarPainel,
+                      onTap: _alternarAlturaPainel,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        color: (lSel == null && _destino == null)
+                            ? (isDark
+                                ? AppConfig.brandDark
+                                : AppConfig.brandLight)
+                            : (isDark
+                                ? AppConfig.panelDark
+                                : AppConfig.bgLight),
+                        child: Center(
+                          child: Container(
+                            width: 52,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: (lSel == null && _destino == null)
+                                  ? Colors.white70
+                                  : Colors.grey.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(3),
                             ),
                           ),
                         ),
-                        GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onVerticalDragUpdate: _arrastarPainel,
-                          child: (lSel == null && _destino == null)
-                              ? _construirCabecalhoBusca(isDark)
-                              : (lSel != null)
-                                  ? _construirBarraLinha(lSel, isDark)
-                                  : _construirBarraDestino(isDark),
-                        ),
-                        Expanded(
-                          child: ListView(
-                            controller: scrollController,
-                            padding: EdgeInsets.zero,
-                            children: [
-                              if (lSel != null)
-                                _construirDetalheLinha(lSel, isDark, uiScale)
-                              else if (_destino != null)
-                                _construirPainelDestino(isDark)
-                              else
-                                _construirListaInicial(isDark, uiScale),
-                            ],
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  );
-                },
+
+                    if (lSel == null && _destino == null)
+                      _construirCabecalhoBusca(isDark)
+                    else if (lSel != null)
+                      _construirBarraLinha(lSel, isDark)
+                    else
+                      _construirBarraDestino(isDark),
+
+                    // Lista interna 100% livre para rolar em qualquer altura do painel!
+                    Expanded(
+                      child: ListView(
+                        controller: _listScrollController,
+                        padding: EdgeInsets.zero,
+                        children: [
+                          if (lSel != null)
+                            _construirDetalheLinha(lSel, isDark, uiScale)
+                          else if (_destino != null)
+                            _construirPainelDestino(isDark)
+                          else
+                            _construirListaInicial(isDark, uiScale),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  // ── Seção de Avisos Retrátil / Minimizável ──
+  Widget _construirSecaoAvisos(bool isDark) {
+    final visiveis = _avisosSupa
+        .where((a) => !_avisosFechadosLocal.contains(a.id))
+        .toList();
+    if (visiveis.isEmpty) return const SizedBox.shrink();
+
+    final temAlerta = visiveis.any((a) => a.tipo == 'alerta');
+    final corBarra =
+        temAlerta ? const Color(0xFFB91C1C) : AppConfig.brandLight;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+      child: Column(
+        children: [
+          // Barra compacta para Minimizar / Expandir todos os avisos
+          Material(
+            color: corBarra,
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () =>
+                  setState(() => _avisosMinimizado = !_avisosMinimizado),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      temAlerta
+                          ? Icons.warning_amber_rounded
+                          : Icons.campaign_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Avisos FOZTRANS (' +
+                            visiveis.length.toString() +
+                            ')',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      _avisosMinimizado ? 'Mostrar ▼' : 'Minimizar ▲',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (!_avisosMinimizado) ...[
+            const SizedBox(height: 6),
+            ...visiveis.map((av) {
+              final ehAlerta = av.tipo == 'alerta';
+              return Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                decoration: BoxDecoration(
+                  color: ehAlerta
+                      ? const Color(0xFFB91C1C)
+                      : AppConfig.accentLight.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border(
+                    left: BorderSide(
+                      color: ehAlerta
+                          ? const Color(0xFF7F1D1D)
+                          : AppConfig.accentLight,
+                      width: 5,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            (av.linhaAfetada.isNotEmpty
+                                    ? '[Linha ' + av.linhaAfetada + '] '
+                                    : '') +
+                                av.titulo,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13.5,
+                              color: ehAlerta ? Colors.white : null,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            av.mensagem,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: ehAlerta ? Colors.white : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: Icon(
+                        Icons.close,
+                        size: 18,
+                        color: ehAlerta ? Colors.white70 : Colors.grey,
+                      ),
+                      tooltip: 'Ocultar este aviso',
+                      onPressed: () => setState(() {
+                        _avisosFechadosLocal.add(av.id);
+                      }),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
         ],
       ),
     );
@@ -969,7 +1178,6 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Polyline> _construirPolilinhas(LinhaOnibus? lSel, bool isDark) {
     final polylines = <Polyline>[];
 
-    // Opção do planejador selecionada
     if (lSel == null &&
         _destino != null &&
         _plano != null &&
@@ -1021,9 +1229,6 @@ class _HomeScreenState extends State<HomeScreen> {
       return polylines;
     }
 
-    // Linha selecionada:
-    // - Meia-viagem atual (siAtivo) = SEMPRE SÓLIDA (por cima)
-    // - Próxima meia-viagem (siProximo) = PONTILHADA (por baixo)
     if (lSel != null) {
       final meias = _obterShapesMeiaViagem(lSel);
 
@@ -1064,7 +1269,6 @@ class _HomeScreenState extends State<HomeScreen> {
       return polylines;
     }
 
-    // Visão geral: filtra pelas abas de família (Todas, 10–70, 101–120, 200–250, 310–380)
     for (final l in _linhasPublicas) {
       if (_abaFamilia != 'all' &&
           MotorHorarios.familiaLinha(l) != _abaFamilia) {
@@ -1087,7 +1291,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return polylines;
   }
 
-  /// Exibe apenas os pontos de parada por onde a meia-viagem SÓLIDA atual realmente passa!
   List<Marker> _construirMarkersParadas(LinhaOnibus? lSel) {
     final markers = <Marker>[];
     final icScale = appSettings.mapIconScale;
@@ -1104,7 +1307,6 @@ class _HomeScreenState extends State<HomeScreen> {
             (o) => o.id == lSel.id && (o.s.isEmpty || o.s == _sentidoSel));
         if (!atendeLinha) return false;
         if (shAtivo == null) return true;
-        // Garante que o ponto fica fisicamente sobre a meia-viagem atual (máx 55m, ou 150m no TTU)
         final distTtu = MotorHorarios.dist(
             s.lat, s.lon, AppConfig.ttuCoords[0], AppConfig.ttuCoords[1]);
         final lim = distTtu <= 200.0 ? 150.0 : 55.0;
@@ -1194,7 +1396,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final icScale = appSettings.mapIconScale;
     final mostrarNum = appSettings.mostrarNumeroNoOnibus;
 
-    // 1. Minha localização GPS (Radar Azul)
     if (_minhaLoc != null) {
       m.add(
         Marker(
@@ -1222,7 +1423,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 2. Trecho selecionado (Gota Vermelha)
     if (_trechoSel != null) {
       m.add(
         Marker(
@@ -1239,7 +1439,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 3. Partida manual ("A")
     if (_origemManual != null) {
       m.add(
         Marker(
@@ -1263,7 +1462,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 4. Destino (Gota Vermelha)
     if (_destino != null && !_destino!.eu) {
       m.add(
         Marker(
@@ -1280,7 +1478,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 5. Pontos de Início e Fim da meia-viagem ativa
     if (lSel != null) {
       final meias = _obterShapesMeiaViagem(lSel);
       if (meias.siAtivo != null) {
@@ -1318,7 +1515,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // 6. Ônibus em tempo real (Ícone 🚌 OU Número da Linha (101) com tamanho configurável!)
     for (final v in _veiculosRt) {
       if (v.idadeSegundos > 300) continue;
       final l = _porId(v.linhaId);
@@ -1335,7 +1531,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
       m.add(
         Marker(
-          key: ValueKey('bus_${v.prefixo}_${v.lat}_${v.lon}'),
+          key: ValueKey('bus_' +
+              v.prefixo +
+              '_' +
+              v.lat.toString() +
+              '_' +
+              v.lon.toString()),
           point: LatLng(v.lat, v.lon),
           width: wBus,
           height: hBus,
@@ -1443,7 +1644,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             const SizedBox(width: 10),
                             Expanded(child: Text(rotSent)),
                             Text(
-                              x.t != null ? '≈ ${MotorHorarios.hm(x.t!)}' : '—',
+                              x.t != null
+                                  ? '≈ ' + MotorHorarios.hm(x.t!)
+                                  : '—',
                               style: const TextStyle(
                                   fontWeight: FontWeight.w700, fontSize: 15),
                             ),
@@ -1477,7 +1680,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── Componentes do Painel Inferior ──
   Widget _construirCabecalhoBusca(bool isDark) {
     return Container(
       color: isDark ? AppConfig.brandDark : AppConfig.brandLight,
@@ -1527,7 +1729,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
-              // Ícone de Engrenagem para abrir a Tela de Configurações
               Material(
                 color: Colors.white.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(8),
@@ -1622,8 +1823,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final ag = MotorHorarios.agoraMin();
 
     final ls = _linhasPublicas.where((l) {
-      final bateBusca =
-          q.isEmpty || MotorHorarios.semAcento('${l.id} ${l.nome}').contains(q);
+      final bateBusca = q.isEmpty ||
+          MotorHorarios.semAcento(l.id + ' ' + l.nome).contains(q);
       final bateAba = q.isNotEmpty ||
           _abaFamilia == 'all' ||
           MotorHorarios.familiaLinha(l) == _abaFamilia;
@@ -1632,14 +1833,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final pois = _d.poi.where((p) {
       if (q.isEmpty) return true;
-      return MotorHorarios.semAcento('${p.pt} ${p.es} ${p.en}').contains(q);
+      return MotorHorarios.semAcento(p.pt + ' ' + p.es + ' ' + p.en)
+          .contains(q);
     }).toList();
 
     final paradasBusca = q.length >= 3
         ? _d.stops
             .where((s) =>
                 s.linhasAtivas.isNotEmpty &&
-                MotorHorarios.semAcento('${s.nome} ${s.endereco}').contains(q))
+                MotorHorarios.semAcento(s.nome + ' ' + s.endereco).contains(q))
             .take(8)
             .toList()
         : <PontoParada>[];
@@ -1649,6 +1851,9 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Seção de Avisos Retrátil / Minimizável
+          _construirSecaoAvisos(isDark),
+
           if (q.isEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
@@ -1752,7 +1957,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                     Padding(
                                       padding: const EdgeInsets.only(top: 2),
                                       child: Text(
-                                        '${_t('nextdep')} ${MotorHorarios.hm(prox)}',
+                                        _t('nextdep') +
+                                            ' ' +
+                                            MotorHorarios.hm(prox),
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: isDark
@@ -1889,7 +2096,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── Detalhe da Linha e Quadro de Horários ──
   Widget _construirBarraLinha(LinhaOnibus l, bool isDark) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -2013,7 +2219,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         if (rotaViagemSel != null)
                           Text(
-                            '${_t('route')}: $rotaViagemSel',
+                            _t('route') + ': ' + rotaViagemSel,
                             style: const TextStyle(
                                 fontSize: 12.5, color: Colors.grey),
                           ),
@@ -2168,8 +2374,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         Text(
                           (proximos.first.m - ag) <= 0
                               ? _t('now')
-                              : _t('inmin')
-                                  .replaceAll('{n}', '${proximos.first.m - ag}'),
+                              : _t('inmin').replaceAll(
+                                  '{n}', (proximos.first.m - ag).toString()),
                           style: const TextStyle(
                               fontSize: 15, fontWeight: FontWeight.w600),
                         ),
@@ -2179,7 +2385,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          '${_t('then')}: ${proximos.skip(1).map((x) => MotorHorarios.hm(x.m)).join(' · ')}',
+                          _t('then') +
+                              ': ' +
+                              proximos
+                                  .skip(1)
+                                  .map((x) => MotorHorarios.hm(x.m))
+                                  .join(' · '),
                           style:
                               const TextStyle(fontSize: 13, color: Colors.grey),
                         ),
@@ -2192,7 +2403,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
           const SizedBox(height: 14),
           Text(
-            '${_t('timetable')} · ${listaHorarios.length} ${_t('trips')}',
+            _t('timetable') +
+                ' · ' +
+                listaHorarios.length.toString() +
+                ' ' +
+                _t('trips'),
             style: const TextStyle(
                 fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey),
           ),
@@ -2201,7 +2416,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => setState(() => _verPassados = !_verPassados),
               child: Text(_verPassados
                   ? _t('hidePast')
-                  : _t('showPast').replaceAll('{n}', '$nPassados')),
+                  : _t('showPast').replaceAll('{n}', nPassados.toString())),
             ),
           const SizedBox(height: 6),
 
@@ -2256,7 +2471,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        '${MotorHorarios.hm(item.m)}${temAst ? '*' : ''}${(!mv.sig && mk.isNotEmpty) ? ' $mk' : ''}',
+                        MotorHorarios.hm(item.m) +
+                            (temAst ? '*' : '') +
+                            ((!mv.sig && mk.isNotEmpty) ? ' ' + mk : ''),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontWeight: (selecionado || ehProx)
@@ -2296,7 +2513,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     children: [
                       TextSpan(
-                        text: '${g[0]} ',
+                        text: g[0] + ' ',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                       TextSpan(text: g[1]),
@@ -2471,7 +2688,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _BadgeLinha(linha: a.l),
                               const SizedBox(width: 8),
                               Text(
-                                '${_t('board')} ≈ ${MotorHorarios.hm(a.t0)}',
+                                _t('board') + ' ≈ ' + MotorHorarios.hm(a.t0),
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w800, fontSize: 18),
                               ),
@@ -2485,27 +2702,50 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const Divider(height: 16),
                           Text(
-                            '• A pé: ${MotorHorarios.arredonda10(o.rO ?? o.dO)} m → ${_d.stops[a.k0].tituloExibicao()}',
+                            '• A pé: ' +
+                                MotorHorarios.arredonda10(o.rO ?? o.dO)
+                                    .toString() +
+                                ' m → ' +
+                                _d.stops[a.k0].tituloExibicao(),
                             style: const TextStyle(fontSize: 13),
                           ),
                           if (comTroca) ...[
                             const SizedBox(height: 4),
                             Text(
                               o.ttu
-                                  ? '• Terminal (TTU) ≈ ${MotorHorarios.hm(a.t1)} → Linha ${z.l.id} ≈ ${MotorHorarios.hm(z.t0)}'
-                                  : '• ${_d.stops[a.k1].tituloExibicao()} ≈ ${MotorHorarios.hm(a.t1)} → Linha ${z.l.id} ≈ ${MotorHorarios.hm(z.t0)}',
+                                  ? '• Terminal (TTU) ≈ ' +
+                                      MotorHorarios.hm(a.t1) +
+                                      ' → Linha ' +
+                                      z.l.id +
+                                      ' ≈ ' +
+                                      MotorHorarios.hm(z.t0)
+                                  : '• ' +
+                                      _d.stops[a.k1].tituloExibicao() +
+                                      ' ≈ ' +
+                                      MotorHorarios.hm(a.t1) +
+                                      ' → Linha ' +
+                                      z.l.id +
+                                      ' ≈ ' +
+                                      MotorHorarios.hm(z.t0),
                               style: const TextStyle(
                                   fontSize: 13, fontWeight: FontWeight.w600),
                             ),
                           ],
                           const SizedBox(height: 4),
                           Text(
-                            '• ${_d.stops[z.k1].tituloExibicao()} ≈ ${MotorHorarios.hm(z.t1)}',
+                            '• ' +
+                                _d.stops[z.k1].tituloExibicao() +
+                                ' ≈ ' +
+                                MotorHorarios.hm(z.t1),
                             style: const TextStyle(fontSize: 13),
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '≈ ${MotorHorarios.hm(o.chega)} · ${o.chega - o.sai} min',
+                            '≈ ' +
+                                MotorHorarios.hm(o.chega) +
+                                ' · ' +
+                                (o.chega - o.sai).toString() +
+                                ' min',
                             style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 13.5,
@@ -2531,7 +2771,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 MotorHorarios.passagens(x.l, dk, dest.lat, dest.lon, 500.0);
             final resumoPs = ['T', 'B']
                 .where((k) => ps.containsKey(k))
-                .map((k) => '${_t('pass')} ≈ ${MotorHorarios.hm(ps[k]!)}')
+                .map((k) => _t('pass') + ' ≈ ' + MotorHorarios.hm(ps[k]!))
                 .join(' · ');
 
             return Padding(
@@ -2558,7 +2798,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                       fontWeight: FontWeight.w600)),
                               const SizedBox(height: 2),
                               Text(
-                                '${MotorHorarios.arredonda10(x.d)} m · ${resumoPs.isNotEmpty ? resumoPs : _t('noPass')}',
+                                MotorHorarios.arredonda10(x.d).toString() +
+                                    ' m · ' +
+                                    (resumoPs.isNotEmpty
+                                        ? resumoPs
+                                        : _t('noPass')),
                                 style: const TextStyle(
                                     fontSize: 12.5, color: Colors.grey),
                               ),
@@ -2675,56 +2919,6 @@ class _ItemLocalPin extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BotaoMapa extends StatelessWidget {
-  final IconData icone;
-  final String rotulo;
-  final VoidCallback onTap;
-  final bool destaque;
-  final double scale;
-
-  const _BotaoMapa({
-    required this.icone,
-    required this.rotulo,
-    required this.onTap,
-    this.destaque = false,
-    this.scale = 1.0,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: destaque ? AppConfig.brandLight : Colors.white,
-      borderRadius: BorderRadius.circular(8),
-      elevation: 3,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-              horizontal: 10 * scale, vertical: 8 * scale),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icone,
-                  size: 16 * scale,
-                  color: destaque ? Colors.white : const Color(0xFF14212B)),
-              const SizedBox(width: 6),
-              Text(
-                rotulo,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: destaque ? Colors.white : const Color(0xFF14212B),
-                ),
-              ),
-            ],
           ),
         ),
       ),
